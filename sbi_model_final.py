@@ -87,8 +87,8 @@ for file in os.listdir(data_dir):
     df = df[(df["E"]<0) & (df["L"]>0)]
 
     # Shift chemical abundances
-    df["FeH"] = df["FeH"] - 1.0
-    df["MgFe"] = df["MgFe"] + 0.4
+    df["FeH"] = df["FeH"]
+    df["MgFe"] = df["MgFe"]+0.4
 
     sim_data.append(df)
 
@@ -116,22 +116,21 @@ fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='ti
 
 
 # Preprocess data
-"""df, apogee_ds_processed = DataProcessor(features=features,
-                                        sim_data=df,
-                                        obs_data=obs_data)"""
+sim_data, obs_data = DataProcessor(features=features,
+                                   sim_data=df,
+                                   obs_data=obs_data)
 
-# Scale data
-scaler = RobustScaler()
-df[features] = scaler.fit_transform(df[features].values)
-apogee_ds[features] = scaler.transform(apogee_ds[features].values)
-apogee_ds_processed = apogee_ds[obs_accreted].copy()
-
-# Remove outliers
-df = df[np.logical_and.reduce([df[feature]**2 < 5**2 for feature in features])]
-apogee_ds_processed = apogee_ds_processed[np.logical_and.reduce([apogee_ds_processed[feature]**2 < 5**2 for feature in features])]
+# Repeat accreted stars selection because of the transformation
+obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
+               ((obs_data.AlFe>=-0.07) & (obs_data.MgMn>=4.25*obs_data.AlFe+0.5475))
+obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_flag"]==1 
+                                    for substructure in ['GES', 'Sagittarius', 'Helmi',
+                                                         'Sequoia_K19','Sequoia_M19','Sequoia_N20',
+                                                         'Iitoi', 'Thamnos','LMS', 'Heracles']])
+apogee_ds_processed = obs_data[obs_accreted]
 
 # Plot data after processing
-fig = plot_stars_data([df, apogee_ds_processed],
+fig = plot_stars_data([df, obs_data, apogee_ds_processed],
                       RANGE=[(-3.3,3.3) for _ in range(len(features))])
 fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 

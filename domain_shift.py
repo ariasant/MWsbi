@@ -12,16 +12,26 @@ def DataProcessor(features: list,
         print("Initializing DataProcessor", flush=True)
         start = time.time()
 
-        # Transform data        
-        sim_data = prepare_data_for_Box_Cox(sim_data, features)
-        obs_data = prepare_data_for_Box_Cox(obs_data, features)
+        # Prepare data for Box-Cox transformation
+        FeH_MIN = min(sim_data["FeH"].min(), obs_data["FeH"].min()) - 1e-3
+        MgFe_MIN = min(sim_data["MgFe"].min(), obs_data["MgFe"].min()) - 1e-3
+
+        for df in [sim_data, obs_data]:
+                df.dropna(subset=features, inplace=True)
+                df.query("E < 0 & L > 0", inplace=True)  # Use query for in-place filtering
+
+                # Remove outliers
+                df.query("L < 1e4 & -3 < FeH < 1 & -1 < MgFe < 1", inplace=True)
+
+                df["E"] *= -1
+                df["FeH"] -= FeH_MIN
+                df["MgFe"] -= MgFe_MIN
+                
 
         # Apply Box-Cox transformation
-        pt_sim = PowerTransformer(method="box-cox", standardize=True)
-        sim_data[features] = pt_sim.fit_transform(sim_data[features].values)
-
-        pt_obs = PowerTransformer(method="box-cox", standardize=True)
-        obs_data[features] = pt_obs.fit_transform(obs_data[features].values)
+        pt = PowerTransformer(method="box-cox", standardize=True)
+        sim_data[features] = pt.fit_transform(sim_data[features].values)
+        obs_data[features] = pt.transform(obs_data[features].values)
 
         # Remove outliers
         sim_data = sim_data[np.logical_and.reduce([sim_data[feature]**2 < 5**2 for feature in features])]
@@ -34,23 +44,3 @@ def DataProcessor(features: list,
 
 
     
-
-def prepare_data_for_Box_Cox(df: pd.DataFrame,
-                             features: list):
-        
-
-        # Prepare data for Box-Cox transformation
-        df.dropna(subset=features, inplace=True)
-        df = df[df["E"]<0]
-
-        # Remove outliers
-        df = df[(df["L"]<1e4) &
-                (df["FeH"]>-3) & (df["FeH"]<1) &
-                (df["MgFe"]>-1) & (df["MgFe"]<1)]
-        
-        # Ensure all features are positive
-        df["E"] *= -1
-        df["FeH"] -= (df["FeH"].min()-1e-3)
-        df["MgFe"] -= (df["MgFe"].min()-1e-3)
-        
-        return df
