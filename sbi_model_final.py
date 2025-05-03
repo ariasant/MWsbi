@@ -2,6 +2,7 @@ import argparse
 import corner
 import matplotlib as mpl
 import numpy as np
+import os
 import pandas as pd
 import pickle
 from sklearn.preprocessing import RobustScaler
@@ -14,7 +15,7 @@ import get_results
 import training
 
 
-def plot_stars_data(dfs: list):
+def plot_stars_data(dfs: list, RANGE=None):
 
     # Initialize color list for the different dataframes
     colors = [mpl.cm.tab10(i/len(dfs)) for i in range(len(dfs))]
@@ -30,7 +31,9 @@ def plot_stars_data(dfs: list):
                                 plot_datapoints=False,
                                 fill_contours=True,
                                 hist_kwargs={"density": True},
-                                alpha=0.5)
+                                alpha=0.5,
+                                range=RANGE
+                                )
         else:
             corner.corner(df[features].values,
                             color=colors[i],
@@ -40,6 +43,7 @@ def plot_stars_data(dfs: list):
                             fill_contours=True,
                             hist_kwargs={"density": True},
                             alpha=0.5,
+                            range=RANGE,
                             fig=fig)
     return fig
 
@@ -58,7 +62,7 @@ features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
 dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
-output_dir = '/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observation_shifted/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/results_shifted/'
 
 filename = f"Suite_"+"".join(features)
 
@@ -71,27 +75,50 @@ substructures = ['GES', 'Sagittarius', 'Helmi',
 ###########################################################################################
 
 # Load simulation (source) data
-df = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/auriga_sbi_data.pkl")
-df.rename(columns={"aFe":"MgFe"}, inplace=True)
+data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
+sim_data = []
+
+for file in os.listdir(data_dir):
+
+    df = pd.read_pickle(f"{data_dir}{file}")
+    df.rename(columns={"aFe":"MgFe"}, inplace=True)
+
+    # Get rid of stars with numerical issues
+    df = df[(df["E"]<0) & (df["L"]>0)]
+
+    sim_data.append(df)
+
+df = pd.concat(sim_data, ignore_index=True)
+
 # Load Milky Way (target) data
 apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
 apogee_ds.dropna(subset=features, inplace=True)
+# Select accreted stars
+"""obs_accreted = ((apogee_ds.AlFe<-0.07) & (apogee_ds.MgMn>=0.25)) | \
+               ((apogee_ds.AlFe>=-0.07) & (apogee_ds.MgMn>=4.25*apogee_ds.AlFe+0.5475))
+obs_accreted = np.logical_or.reduce([obs_accreted]+[apogee_ds[f"{substructure}_flag"]==1 
+                                    for substructure in ['GES', 'Sagittarius', 'Helmi',
+                                                         'Sequoia_K19','Sequoia_M19','Sequoia_N20',
+                                                         'Iitoi', 'Thamnos','LMS', 'Heracles']])
 
+obs_data = apogee_ds[obs_accreted]"""
+obs_data = apogee_ds
 
 # Plot initial data
-fig = plot_stars_data([df, apogee_ds])
+fig = plot_stars_data([df, obs_data],
+                      RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-1, 1)])
 fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
-# Initialize the data processor
-data_processor = DataProcessor(features=features)  
 
-df = data_processor.process_data_sim(sim_df=df)
-apogee_ds_processed = data_processor.process_data_obs(obs_df=apogee_ds)
-
+# Preprocess data
+df, apogee_ds_processed = DataProcessor(features=features,
+                                        sim_data=df,
+                                        obs_data=obs_data)
 
 # Plot data after processing
-fig = plot_stars_data([df, apogee_ds_processed])
-fig.savefig(f"{output_dir}transformed_data_{filename}_shifted_rm_outliers.pdf", dpi=300, bbox_inches='tight')
+fig = plot_stars_data([df, apogee_ds_processed],
+                      RANGE=[(-3.3,3.3) for _ in range(len(features))])
+fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 ## Print the number of stars in each substructure of the MW before and after removing outliers
 print("Counting stars in each substructure of the MW before and after removing outliers:", flush=True)
@@ -123,6 +150,8 @@ fig.savefig(f"{output_dir}merger_parameters_{filename}.pdf", dpi=300, bbox_inche
 scaler_params = RobustScaler()
 # Scale the merger parameters
 df[parameters] = scaler_params.fit_transform(df[parameters].values)
+
+print(f"N progID: {len(df['progID'].unique())}", flush=True)
 
 # Create datasets for training 
 X_train, Y_train = [], []
@@ -158,7 +187,6 @@ print(f"Y_test shape: {Y_test.shape}", flush=True)
 
 # Save scaler for future analysis
 pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
-pickle.dump(data_processor,open(f"{output_dir}/DataProcessor_{filename}.pkl","wb"))
 # Save processed Milky Way data
 pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
