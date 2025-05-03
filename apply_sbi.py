@@ -4,8 +4,8 @@ import pandas as pd
 import pickle
 import torch
 
-model_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observation_shifted/"
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/results_shifted/"
+model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/"
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/"
 
 features=["E","L","FeH","MgFe"]
 
