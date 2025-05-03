@@ -57,7 +57,7 @@ def get_alpha_Fe_abundances(snapobj):
     #aFe = sum([OFe,MgFe,NeFe,SiFe])/4
     aFe = np.log10(sum([N_O,N_Mg,N_Ne,N_Si])/(N_Fe)) - aFe_Sun
 
-    return MgFe+0.4, FeH
+    return MgFe, FeH
 
 def get_zeropoint_potential(galaxy_num, sim_dir='/mnt/aridata1/users/arirgran/Auriga/level4/Original/'):
     # Get zero point of potential
@@ -94,14 +94,18 @@ simulation_dir = '/mnt/aridata1/users/arirgran/Auriga/level4/Original/'
 
 # Load APOGEE stars chemical abundances
 df = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_ds_min.pkl")
-aFe = list(df["aFe"].values)
+aFe = list(df["MgFe"].values)
 FeH = list(df["FeH"].values)
+
+aFe_sim = []
+FeH_sim = []
+
 E = list(df["E"].values)
 L = list(df["L"].values)
 ds_ID = ["APOGEE" for i in range(len(aFe))]
 
 # Load chemical abundances from some of the Auriga halos
-halos = [6,16,21]
+halos = [i for i in range(1,31)]
 for halo in halos:
 
     attrstoload = ['Coordinates', 'Velocities',  'Masses', 'Potential', 'ParticleIDs',
@@ -157,13 +161,11 @@ for halo in halos:
     # Sample only maximum 50,000 stars
     idx = np.random.randint(0, high=len(E_halo), size=50000)
 
-    aFe += list(aFe_halo[idx])
-    FeH += list(FeH_halo[idx])
+    aFe_sim += list(aFe_halo[idx])
+    FeH_sim += list(FeH_halo[idx])
 
     E += list(E_halo[idx])
     L += list(L_halo[idx])
-
-    ds_ID += [f"Au{halo}" for i in range(len(E_halo[idx]))]
 
     print(halo)
 
@@ -216,31 +218,43 @@ def plot(x,
 
     fig.savefig(f"{filename}.png", dpi=400)
 
-plot(FeH,
-     aFe,
+
+x = np.concatenate([FeH, FeH_sim])
+y = np.concatenate([aFe, aFe_sim])
+ds_ID = ["APOGEE" for i in range(len(aFe))] + ["Auriga" for i in range(len(aFe_sim))]
+
+plot(x,
+     y,
      labels=ds_ID,
      xlabel="[Fe/H]",
      ylabel="[Mg/Fe]",
      xlim=[-2,1],
      ylim=[-0.2,0.6],
-     filename="/mnt/aridata1/users/ariasant/MW-sbi/sim_vs_obs_chem_Mg")
+     filename="/mnt/aridata1/users/ariasant/MW-sbi/sim_vs_obs_chem")
+
+FeH_sim = np.array(FeH_sim)
+aFe_sim = np.array(aFe_sim)
+FeH_sim -=0.15
+aFe_sim += 0.40
+x = np.concatenate([FeH, FeH_sim])
+y = np.concatenate([aFe, aFe_sim])
+
+plot(x,
+    y,
+    labels=ds_ID,
+    xlabel="[Fe/H]",
+    ylabel="[Mg/Fe]",
+    xlim=[-2,1],
+    ylim=[-0.2,0.6],
+    filename="/mnt/aridata1/users/ariasant/MW-sbi/sim_vs_obs_chem_corrected")
 
 
-plot(FeH[df.shape[0]:],
-     aFe[df.shape[0]:],
-     labels=ds_ID[df.shape[0]:],
-     xlabel="[Fe/H]",
-     ylabel="[Mg/Fe]",
-     xlim=[-2,1],
-     ylim=[-0.2,0.6],
-     filename="/mnt/aridata1/users/ariasant/MW-sbi/sim_chem_Mg")
 
-
-plot([L[i]/1000 for i in range(len(L))],
+"""plot([L[i]/1000 for i in range(len(L))],
      [E[i]/10000 for i in range(len(E))],
      labels=ds_ID,
      xlabel="$L \; [10^{3}\, \\times \, \mathrm{kpc} \,\mathrm{km}\mathrm{s}^{-1}]$",
      ylabel="$E \; [10^{4}\, \\times \, \mathrm{kpc}^{2} \, \mathrm{km}^{2]\mathrm{s}^{-2}}]$",
      xlim=[0,5],
      ylim=[-25,0],
-     filename="/mnt/aridata1/users/ariasant/MW-sbi/sim_vs_obs_dyn")
+     filename="/mnt/aridata1/users/ariasant/MW-sbi/sim_vs_obs_dyn")"""
