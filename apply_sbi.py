@@ -4,7 +4,7 @@ import pandas as pd
 import pickle
 import torch
 
-model_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observation_shifted/"
+model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/results_shifted/"
 output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/results_shifted/"
 
 features=["E","L","FeH","MgFe"]
@@ -22,6 +22,7 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
 
 # Load pre-processed apogee sample
 df = pd.read_pickle(f"{model_dir}apogee_ds_processed_Suite_ELFeHMgFe.pkl")
+df["FeH"] = df["FeH"] 
 
 substructures = ['GES', 'Sagittarius', 'Helmi',
        'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',

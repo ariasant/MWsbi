@@ -94,15 +94,16 @@ df = pd.concat(sim_data, ignore_index=True)
 apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
 apogee_ds.dropna(subset=features, inplace=True)
 # Select accreted stars
-"""obs_accreted = ((apogee_ds.AlFe<-0.07) & (apogee_ds.MgMn>=0.25)) | \
+obs_accreted = ((apogee_ds.AlFe<-0.07) & (apogee_ds.MgMn>=0.25)) | \
                ((apogee_ds.AlFe>=-0.07) & (apogee_ds.MgMn>=4.25*apogee_ds.AlFe+0.5475))
 obs_accreted = np.logical_or.reduce([obs_accreted]+[apogee_ds[f"{substructure}_flag"]==1 
                                     for substructure in ['GES', 'Sagittarius', 'Helmi',
                                                          'Sequoia_K19','Sequoia_M19','Sequoia_N20',
                                                          'Iitoi', 'Thamnos','LMS', 'Heracles']])
 
-obs_data = apogee_ds[obs_accreted]"""
-obs_data = apogee_ds
+obs_data = apogee_ds[obs_accreted]
+
+
 
 # Plot initial data
 fig = plot_stars_data([df, obs_data],
