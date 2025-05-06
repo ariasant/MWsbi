@@ -7,12 +7,12 @@ import pandas as pd
 import pickle
 from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import train_test_split
+import torch
 
 import sys
-sys.path.append("/mnt/aridata1/users/ariasant/auriga-sbi/")
-from domain_shift import DataProcessor
-import get_results
-import training
+sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
+import multitask_model as mt
+
 
 
 def plot_stars_data(dfs: list, RANGE=None):
@@ -62,13 +62,19 @@ features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
 dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/multitask_results/'
 
 filename = f"Suite_"+"".join(features)
 
 substructures = ['GES', 'Sagittarius', 'Helmi',
        'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
        'LMS', 'Heracles']
+
+
+BATCH_SIZE = 256
+
+# Define device where the model will be trained
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ###########################################################################################
 # Data preparation
@@ -84,15 +90,13 @@ for file in os.listdir(data_dir):
     df.rename(columns={"aFe":"MgFe"}, inplace=True)
 
     # Get rid of stars with numerical issues
-    df = df[(df["E"]<0) & (df["L"]>0)]
-
-    # Shift chemical abundances
-    df["FeH"] = df["FeH"]
-    df["MgFe"] = df["MgFe"]+0.4
+    df = df[(df["E"]<0) & (df["L"]>0)
+            & (df["FeH"]>-3) & (df["FeH"]<1)
+            & (df["MgFe"]>-1) & (df["MgFe"]<1)]
 
     sim_data.append(df)
 
-df = pd.concat(sim_data, ignore_index=True)
+sim_data = pd.concat(sim_data, ignore_index=True)
 
 # Load Milky Way (target) data
 apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
@@ -105,51 +109,22 @@ obs_accreted = np.logical_or.reduce([obs_accreted]+[apogee_ds[f"{substructure}_f
                                                          'Sequoia_K19','Sequoia_M19','Sequoia_N20',
                                                          'Iitoi', 'Thamnos','LMS', 'Heracles']])
 
-
-
 obs_data = apogee_ds
 
 # Plot initial data
-fig = plot_stars_data([df, obs_data, obs_data[obs_accreted]],
+fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]],
                       RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-0.2, 0.6)])
 fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 
-# Preprocess data
-sim_data, obs_data = DataProcessor(features=features,
-                                   sim_data=df,
-                                   obs_data=obs_data)
-
-# Repeat accreted stars selection because of the transformation
-obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
-               ((obs_data.AlFe>=-0.07) & (obs_data.MgMn>=4.25*obs_data.AlFe+0.5475))
-obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_flag"]==1 
-                                    for substructure in ['GES', 'Sagittarius', 'Helmi',
-                                                         'Sequoia_K19','Sequoia_M19','Sequoia_N20',
-                                                         'Iitoi', 'Thamnos','LMS', 'Heracles']])
-apogee_ds_processed = obs_data[obs_accreted]
-
-# Plot data after processing
-fig = plot_stars_data([df, obs_data, apogee_ds_processed],
-                      RANGE=[(-3.3,3.3) for _ in range(len(features))])
-fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
-
-## Print the number of stars in each substructure of the MW before and after removing outliers
-print("Counting stars in each substructure of the MW before and after removing outliers:", flush=True)
-for substructure in substructures:
-    n_before = sum(apogee_ds[f"{substructure}_flag"]==1)
-    n_after = sum(apogee_ds_processed[f"{substructure}_flag"]==1)
-    print("="*50, flush=True)
-    print(f"{substructure}: {n_before} -> {n_after}", flush=True)
-    print("="*50, flush=True)
-
-    # Plot the stars in each substructure
-    fig = plot_stars_data([df, apogee_ds_processed[apogee_ds_processed[f"{substructure}_flag"]==1]])
-    fig.savefig(f"{output_dir}transformed_data_{filename}_shifted_{substructure}.pdf", dpi=300, bbox_inches='tight')
+# Scale data
+scaler = RobustScaler()
+sim_data[features] = scaler.fit_transform(sim_data[features].values)
+obs_data[features] = scaler.transform(obs_data[features].values)
 
 
 # Plot merger parameters
-fig = corner.corner(df[parameters].values,
+fig = corner.corner(sim_data[parameters].values,
                     color='k',
                     labels=parameters,
                     bins=20,
@@ -163,25 +138,36 @@ fig.savefig(f"{output_dir}merger_parameters_{filename}.pdf", dpi=300, bbox_inche
 # Initialize the scaler for the merger parameters
 scaler_params = RobustScaler()
 # Scale the merger parameters
-df[parameters] = scaler_params.fit_transform(df[parameters].values)
+sim_data[parameters] = scaler_params.fit_transform(sim_data[parameters].values)
 
-print(f"N progID: {len(df['progID'].unique())}", flush=True)
+print(f"N progID: {len(sim_data['progID'].unique())}", flush=True)
 
 # Create datasets for training 
 X_train, Y_train = [], []
 n = 100 # number of samples per progenitor
 
-for progID in df["progID"].unique():
+for progID in sim_data["progID"].unique():
     # Get the data for the current progenitor
-    prog_data = df[df["progID"]==progID]
+    prog_data = sim_data[sim_data["progID"] == progID]
     if len(prog_data) < 100:
         continue
-    # Sample the data n times
-    for i in range(n):
-        idx_sample = np.random.randint(0, len(prog_data), size=100)
 
-        X_train.append(prog_data[features].values[idx_sample].reshape(-1))
-        Y_train.append(prog_data[parameters].values[idx_sample][0])
+    # Precompute the reshaped feature values for the progenitor
+    prog_features = prog_data[features].values
+    prog_parameters = prog_data[parameters].values
+
+    # Sample the data n times
+    idx_samples = np.random.randint(0, len(prog_data), size=(n, 100))
+    X_train.extend(prog_features[idx_samples].reshape(n, -1))
+    Y_train.extend(prog_parameters[idx_samples[:, 0]])
+
+# Precompute observational data indices
+obs_idx_samples = np.random.randint(0, len(obs_data), size=(len(X_train), 100))
+obs_features = obs_data[features].values[obs_idx_samples].reshape(len(X_train), -1)
+
+# Append observational data for domain shift
+X_train.extend(obs_features)
+Y_train.extend([np.array([np.nan] * len(parameters))] * len(obs_features))
 
 X_train = np.stack(X_train)
 Y_train = np.stack(Y_train)
@@ -199,12 +185,26 @@ print(f"X_test shape: {X_test.shape}", flush=True)
 print(f"Y_test shape: {Y_test.shape}", flush=True)
     
 
+# Create dataloaders for training
+train_dataset = torch.utils.data.TensorDataset(torch.Tensor(X_train).to(device), 
+                                               torch.Tensor(Y_train).to(device))
+train_loader = torch.utils.data.DataLoader(train_dataset,
+                                           batch_size=BATCH_SIZE,
+                                           shuffle=True,
+                                           pin_memory=True)
+# Validation set
+test_dataset = torch.utils.data.TensorDataset(torch.Tensor(X_test).to(device), 
+                                              torch.Tensor(Y_test).to(device))
+test_loader = torch.utils.data.DataLoader(test_dataset,
+                                           batch_size=BATCH_SIZE,
+                                           shuffle=False,
+                                           pin_memory=True)
+
+
 # Save scaler for future analysis
 pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
 # Save processed Milky Way data
-pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
-
-
+pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
 ####################################################################################
 ####################################################################################
@@ -212,13 +212,35 @@ pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filena
 ####################################################################################
 ####################################################################################
 
-# Train NDE model
-posterior_model = training.NPE_training(X_train=X_train,
-                                        Y_train=Y_train,
-                                        prior_ranges=[scaler_params.transform(np.array([0,6,8,-3])[None,:] )[0],
-                                                      scaler_params.transform(np.array([14,11,12,0])[None,:] )[0]],
-                                        filename=filename,
-                                        output_dir=output_dir)
+# Initialize the model
+model = mt.MultiTask(input_dim=X_train.shape[1], 
+                  n_conditions=Y_train.shape[1], # Dimension of the probability distribution approximated by the flow
+                  n_layers_enc = 2,
+                  latent_dim_enc = 100,
+                  n_transforms = 5,
+                  n_layers_per_transform = 2,
+                  n_neurons_flow = 50)
+
+# Initialize the optimizer
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+# Train the model
+training_results = model.train(train_dataloader=train_loader,
+                               val_dataloader=test_loader,
+                               optimizer=optimizer,
+                               epochs=100,
+                               warmup=10)
+
+# Plot the training losses
+mt.plot_training_losses(training_results)
+mt.plot_distances(training_results)
+
+# Save the model
+model_path = f"{output_dir}model_{filename}.pt"
+torch.save(model.state_dict(), model_path)
+
+# Save the training results
+pickle.dump(training_results, open(f"{output_dir}training_results_{filename}.pkl", "wb"))
 
 
 ####################################################################################
