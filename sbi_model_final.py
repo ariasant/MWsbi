@@ -62,7 +62,7 @@ features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
 dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/'
 
 filename = f"Suite_"+"".join(features)
 
@@ -75,7 +75,7 @@ substructures = ['GES', 'Sagittarius', 'Helmi',
 ###########################################################################################
 
 # Load simulation (source) data
-data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
+data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
 sim_data = []
 
 for file in os.listdir(data_dir):
@@ -87,7 +87,7 @@ for file in os.listdir(data_dir):
     df = df[(df["E"]<0) & (df["L"]>0)]
 
     # Shift chemical abundances
-    df["FeH"] = df["FeH"]
+    df["FeH"] = df["FeH"]-0.4
     df["MgFe"] = df["MgFe"]+0.4
 
     sim_data.append(df)
@@ -116,9 +116,9 @@ fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='ti
 
 
 # Preprocess data
-sim_data, obs_data = DataProcessor(features=features,
-                                   sim_data=df,
-                                   obs_data=obs_data)
+sim_data, obs_data, pt, FeH_min, MgFe_min = DataProcessor(features=features,
+                                                          sim_data=df,
+                                                          obs_data=obs_data)
 
 # Repeat accreted stars selection because of the transformation
 obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
@@ -199,7 +199,9 @@ print(f"X_test shape: {X_test.shape}", flush=True)
 print(f"Y_test shape: {Y_test.shape}", flush=True)
     
 
-# Save scaler for future analysis
+# Save scalers for future analysis
+pickle.dump(pt,open(f"{output_dir}/X_scaler_{filename}.pkl","wb"))
+np.savez(f"{output_dir}/min_values_{filename}.pkl", FeH=FeH_min, MgFe=MgFe_min)
 pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
 # Save processed Milky Way data
 pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
@@ -228,7 +230,7 @@ posterior_model = training.NPE_training(X_train=X_train,
 ####################################################################################
 
 
-"""# Sample parameters for test galaxy
+# Sample parameters for test galaxy
 samples = training.validation(posterior_ensemble=posterior_model,
                               test_dictionary=test_dictionary,
                               filename=filename,
@@ -268,7 +270,5 @@ get_results.rms_table_per_galaxy(samples={"SUITE":samples},
 get_results.count_predictions_within_range(samples={"SUITE":samples},
                                            parameters=parameters,
                                            percentile_range=[16,84],
-                                           filename=f'{output_dir}range_table_{filename}_3468.csv')"""
-
-
+                                           filename=f'{output_dir}range_table_{filename}_1684.csv')
 

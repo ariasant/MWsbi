@@ -40,7 +40,7 @@ def DataProcessor(features: list,
         end = time.time()
         print(f"DataProcessor initialized in {end-start:.2f} seconds", flush=True)
 
-        return sim_data, obs_data
+        return sim_data, obs_data, pt, FeH_MIN, MgFe_MIN
 
 
     
