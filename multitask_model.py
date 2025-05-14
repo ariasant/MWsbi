@@ -95,10 +95,6 @@ class MultiTask(nn.Module):
                                    context=n_conditions,
                                    transforms=n_transforms,
                                    hidden_features=[n_neurons_flow for i in range(n_layers_per_transform)])
-        
-        # Add loss function tunable weights
-        self.eta_1 = nn.Parameter(torch.tensor(1.0, device=device))
-        self.eta_2 = nn.Parameter(torch.tensor(1.0, device=device))
 
         # Add list for storing distances and eta values
         self.max_distances, self.js_distances = [], []
@@ -176,14 +172,19 @@ class MultiTask(nn.Module):
         return loss.item(), DA_loss.item(), log_p.item()
     
     
-    def train(self, 
-              train_dataloader: torch.utils.data.DataLoader,
-              val_dataloader: torch.utils.data.DataLoader,
-              optimizer: torch.optim.Optimizer,
-              epochs: int,
-              warmup: int = 5
-              ):
+    def train_model(self, 
+                train_dataloader: torch.utils.data.DataLoader,
+                val_dataloader: torch.utils.data.DataLoader,
+                optimizer: torch.optim.Optimizer,
+                epochs: int,
+                warmup: int = 5
+                ):
 
+
+        # Add loss function tunable weights
+        self.eta_1 = nn.Parameter(torch.tensor(1.0, device=device))
+        self.eta_2 = nn.Parameter(torch.tensor(1.0, device=device))
+        
         optimizer.add_param_group({"params": [self.eta_1, self.eta_2]})
 
         # Initialize loss function list
@@ -191,9 +192,9 @@ class MultiTask(nn.Module):
         val_losses, val_flow_losses, val_DA_losses = [], [], []
 
 
-        for epoch in epochs:
+        for epoch in range(epochs):
 
-            warmup = True if epoch < n_warmup else False
+            warmup = True if epoch < warmup else False
 
             train_loss = 0.0
             DA_loss_epoch = 0.0
@@ -205,7 +206,7 @@ class MultiTask(nn.Module):
 
             start_time = time.time()
             
-            for (batch, (train_data,train_conditions), (val_data,val_conditions)) in enumerate(zip(train_dataloader, train_dataloader)):
+            for (train_data,train_conditions), (val_data,val_conditions) in zip(train_dataloader, train_dataloader):
 
                 # Set model to training mode
                 self.train()

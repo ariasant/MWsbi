@@ -80,7 +80,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Data preparation
 ###########################################################################################
 
-# Load simulation (source) data
+X_train = np.ones((1000,400))
+X_test = np.ones((100,400))
+Y_train = np.ones((1000,4))
+Y_test = np.ones((100,4))
+
+
+"""# Load simulation (source) data
 data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
 sim_data = []
 
@@ -113,7 +119,7 @@ obs_data = apogee_ds
 
 # Plot initial data
 fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]],
-                      RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-0.2, 0.6)])
+                      RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-0.6, 0.6)])
 fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 
@@ -182,7 +188,7 @@ test_dictionary = {"X": X_test,
 print(f"X_train shape: {X_train.shape}", flush=True)
 print(f"Y_train shape: {Y_train.shape}", flush=True)
 print(f"X_test shape: {X_test.shape}", flush=True)
-print(f"Y_test shape: {Y_test.shape}", flush=True)
+print(f"Y_test shape: {Y_test.shape}", flush=True)"""
     
 
 # Create dataloaders for training
@@ -191,20 +197,20 @@ train_dataset = torch.utils.data.TensorDataset(torch.Tensor(X_train).to(device),
 train_loader = torch.utils.data.DataLoader(train_dataset,
                                            batch_size=BATCH_SIZE,
                                            shuffle=True,
-                                           pin_memory=True)
+                                           pin_memory=False)
 # Validation set
 test_dataset = torch.utils.data.TensorDataset(torch.Tensor(X_test).to(device), 
                                               torch.Tensor(Y_test).to(device))
 test_loader = torch.utils.data.DataLoader(test_dataset,
-                                           batch_size=BATCH_SIZE,
-                                           shuffle=False,
-                                           pin_memory=True)
+                                          batch_size=BATCH_SIZE,
+                                          shuffle=False,
+                                          pin_memory=False)
 
 
 # Save scaler for future analysis
-pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
+#pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
 # Save processed Milky Way data
-pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
+#pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
 ####################################################################################
 ####################################################################################
@@ -221,15 +227,18 @@ model = mt.MultiTask(input_dim=X_train.shape[1],
                   n_layers_per_transform = 2,
                   n_neurons_flow = 50)
 
+# Move model to training device
+model = model.to(device)
+
 # Initialize the optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 # Train the model
-training_results = model.train(train_dataloader=train_loader,
-                               val_dataloader=test_loader,
-                               optimizer=optimizer,
-                               epochs=100,
-                               warmup=10)
+training_results = model.train_model(train_dataloader=train_loader,
+                                     val_dataloader=test_loader,
+                                     optimizer=optimizer,
+                                     epochs=100,
+                                     warmup=10)
 
 # Plot the training losses
 mt.plot_training_losses(training_results)
