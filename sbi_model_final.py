@@ -61,8 +61,8 @@ args = CLI.parse_args()
 features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/results_shifted/'
+dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/'
 
 filename = f"Suite_"+"".join(features)
 
@@ -75,7 +75,7 @@ substructures = ['GES', 'Sagittarius', 'Helmi',
 ###########################################################################################
 
 # Load simulation (source) data
-data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
+data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
 sim_data = []
 
 for file in os.listdir(data_dir):
@@ -86,12 +86,18 @@ for file in os.listdir(data_dir):
     # Get rid of stars with numerical issues
     df = df[(df["E"]<0) & (df["L"]>0)]
 
+    # Shift chemical abundances
+    df["FeH"] = df["FeH"]-0.4
+    df["MgFe"] = df["MgFe"]+0.4
+
     sim_data.append(df)
 
 df = pd.concat(sim_data, ignore_index=True)
 
 # Load Milky Way (target) data
 apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
+apogee_ds_satellites = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
+apogee_ds = pd.concat([apogee_ds, apogee_ds_satellites])
 apogee_ds.dropna(subset=features, inplace=True)
 # Select accreted stars
 obs_accreted = ((apogee_ds.AlFe<-0.07) & (apogee_ds.MgMn>=0.25)) | \
@@ -101,23 +107,32 @@ obs_accreted = np.logical_or.reduce([obs_accreted]+[apogee_ds[f"{substructure}_f
                                                          'Sequoia_K19','Sequoia_M19','Sequoia_N20',
                                                          'Iitoi', 'Thamnos','LMS', 'Heracles']])
 
-obs_data = apogee_ds[obs_accreted]
 
 
+obs_data = apogee_ds
 
 # Plot initial data
-fig = plot_stars_data([df, obs_data],
-                      RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-1, 1)])
+fig = plot_stars_data([df, obs_data, obs_data[obs_accreted]],
+                      RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-0.2, 0.6)])
 fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 
 # Preprocess data
-df, apogee_ds_processed = DataProcessor(features=features,
-                                        sim_data=df,
-                                        obs_data=obs_data)
+sim_data, obs_data, pt, FeH_min, MgFe_min = DataProcessor(features=features,
+                                                          sim_data=df,
+                                                          obs_data=obs_data)
+
+# Repeat accreted stars selection because of the transformation
+obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
+               ((obs_data.AlFe>=-0.07) & (obs_data.MgMn>=4.25*obs_data.AlFe+0.5475))
+obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_flag"]==1 
+                                    for substructure in ['GES', 'Sagittarius', 'Helmi',
+                                                         'Sequoia_K19','Sequoia_M19','Sequoia_N20',
+                                                         'Iitoi', 'Thamnos','LMS', 'Heracles']])
+apogee_ds_processed = obs_data[obs_accreted]
 
 # Plot data after processing
-fig = plot_stars_data([df, apogee_ds_processed],
+fig = plot_stars_data([df, obs_data, apogee_ds_processed],
                       RANGE=[(-3.3,3.3) for _ in range(len(features))])
 fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
@@ -186,7 +201,9 @@ print(f"X_test shape: {X_test.shape}", flush=True)
 print(f"Y_test shape: {Y_test.shape}", flush=True)
     
 
-# Save scaler for future analysis
+# Save scalers for future analysis
+pickle.dump(pt,open(f"{output_dir}/X_scaler_{filename}.pkl","wb"))
+np.savez(f"{output_dir}/min_values_{filename}", FeH=FeH_min, MgFe=MgFe_min)
 pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
 # Save processed Milky Way data
 pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
@@ -215,7 +232,7 @@ posterior_model = training.NPE_training(X_train=X_train,
 ####################################################################################
 
 
-"""# Sample parameters for test galaxy
+# Sample parameters for test galaxy
 samples = training.validation(posterior_ensemble=posterior_model,
                               test_dictionary=test_dictionary,
                               filename=filename,
@@ -255,7 +272,5 @@ get_results.rms_table_per_galaxy(samples={"SUITE":samples},
 get_results.count_predictions_within_range(samples={"SUITE":samples},
                                            parameters=parameters,
                                            percentile_range=[16,84],
-                                           filename=f'{output_dir}range_table_{filename}_3468.csv')"""
-
-
+                                           filename=f'{output_dir}range_table_{filename}_1684.csv')
 

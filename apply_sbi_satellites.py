@@ -13,6 +13,10 @@ features=["E","L","FeH","MgFe"]
 posterior = pickle.load(open(f"{model_dir}Suite_ELFeHMgFe.pkl","rb"))
 
 # Data processing tools
+chem_min_values = np.load(f"{model_dir}min_values_Suite_ELFeHMgFe.pkl.npz")
+FeH_min = chem_min_values["FeH"]
+MgFe_min = chem_min_values["MgFe"]
+X_scaler = pickle.load(open(f"{model_dir}X_scaler_Suite_ELFeHMgFe.pkl","rb")) # star properties scaler
 theta_scaler = pickle.load(open(f"{model_dir}theta_scaler_Suite_ELFeHMgFe.pkl","rb")) # progenitor properties scaler
 
 plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
@@ -20,43 +24,22 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'log($M/M_{\odot}$)', 
              'MMR (log)']
 
-# Load pre-processed apogee sample
-df = pd.read_pickle(f"{model_dir}apogee_ds_processed_Suite_ELFeHMgFe.pkl")
-df["FeH"] = df["FeH"] 
+# Load satellites data
+df = pd.read_pickle(f"/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
+df = df[(df["E"]<0)&(df["satelliteID"]!="GSE")]
 
-substructures = ['Arjuna', 'GES', 'Sagittarius', 'Helmi',
-       'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
-       'LMS', 'Heracles', 'Sequoia_ALL']
+# Preprocess dataframe
+df["E"] *= -1
+df["FeH"] -= FeH_min
+df["MgFe"] -= MgFe_min
 
-for substructure in substructures:
+df[features] = X_scaler.transform(df[features].values)
+
+
+for satellite in df["satelliteID"].unique():
     
-
-    if substructure=="GES":
-        df_sub = df[df[substructure+"_flag"]==1]
-        # Improve purity of GES sample
-        df_sub = df_sub[df_sub["FeH"]<-0.6]
-        print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
-
-    elif substructure=="Sagittarius":
-        # Consider the stars that match with the selection of Hernquist
-        satellites_data = pd.read_csv("/mnt/aridata1/users/ariasant/MW-sbi/data/member_list_fe_mg.txt")
-        SGR_star_IDs = satellites_data[satellites_data["System"]=="Sgr"]["APOGEE_ID"].values
-        df_sub = df[df["APOGEE_ID"].isin(SGR_star_IDs)]
-        # Ignore stars too close to Galaxy centre
-        df_sub = df_sub[(df_sub["r"]>5)&(df_sub["r"]<30)]
-        print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
-
-    elif substructure=="Sequoia_ALL":
-        # Consider all the sequoia samples together
-        df_sub = df[(df["Sequoia_M19_flag"]==1) | 
-                    (df["Sequoia_K19_flag"]==1) | 
-                    (df["Sequoia_N20_flag"]==1)]
-        print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
-
-    else:
-        df_sub = df[df[substructure+"_flag"]==1]
-        print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
-
+    df_sub = df[df["satelliteID"]==satellite]
+    print(f"N stars in {satellite}: {df_sub.shape[0]:,}", flush=True)
     
     data = df_sub[features].values
 
@@ -65,8 +48,13 @@ for substructure in substructures:
         # get how many times you can sample from the progenitor
         n_samples = int(len(data)/100)*10
         data_samples = [data[np.random.randint(0,len(data),size=100)].flatten() for i in range(n_samples)]
-    else:
+    
+    elif len(data)>25:
         data_samples = [data[np.random.randint(0,len(data),size=100)].flatten()]
+    
+    else:
+        print(f"Not enough data for {satellite}.", flush=True)
+        continue
 
     # Sample the posterior of the progenitor properties as conditioned by each data sample
     posterior_samples = []
@@ -90,7 +78,7 @@ for substructure in substructures:
     posterior_samples = np.concatenate(posterior_samples, axis=0)
     
     # Save posterior samples
-    pickle.dump(posterior_samples, open(f"{output_dir}{substructure}.pkl","wb"))
+    pickle.dump(posterior_samples, open(f"{output_dir}{satellite}_sat.pkl","wb"))
     
     # Plot posterior samples
     fig = corner.corner(posterior_samples, 
@@ -101,6 +89,6 @@ for substructure in substructures:
                         show_titles=True,
                         title_kwargs={'fontsize':8},
                         verbose=True)
-    fig.savefig(f"{output_dir}{substructure}.pdf",dpi=400)
+    fig.savefig(f"{output_dir}{satellite}_sat.pdf",dpi=400)
     fig.clf()
 

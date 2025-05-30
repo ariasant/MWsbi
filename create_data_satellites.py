@@ -89,6 +89,8 @@ def eccentricity(idx_stars):
 
 def save_data(mask, filename):
 
+    print(f"Saving {filename} selection. N stars: {sum(mask):,}", flush=True)
+
     # Add selection flag to dataframe
     key = f"{filename}_flag"
     df[key] = np.zeros(df.shape[0], dtype=int)
@@ -97,8 +99,6 @@ def save_data(mask, filename):
     # Save subsample as a separate dataframe
     df_prog = df.loc[mask]
     df_prog.to_pickle(f"/mnt/aridata1/users/ariasant/MW-sbi/data/{filename}.pkl")
-
-    print(f"Saved {filename} selection. N stars: {len(df_prog):,}", flush=True)
 
 
 # Read APOGEE data
@@ -149,14 +149,10 @@ N=data.shape[0]
 data = data[~np.isin(data["APOGEE_ID"], GC_data["APOGEE_ID"])]
 print("Removed {:,} stars from GC catalog".format(N-data.shape[0]), flush=True)
 
-# Remove stars from the magellanic clouds
-N=data.shape[0]
-LMC_mask = ~np.isin(data["APOGEE_ID"], LMC_star_IDs)
-SMC_mask = ~np.isin(data["APOGEE_ID"], SMC_star_IDs)
-
-data = data[np.logical_and(LMC_mask, SMC_mask)]
-print("Removed {:,} stars from the LMC and SMC".format(N-data.shape[0]), flush=True)
-
+# Select only stars in satellites
+print("Selecting stars in satellites..", flush=True)
+data = data[np.isin(data["APOGEE_ID"], satellites_data["APOGEE_ID"])]
+print(f"N stars: {data.shape[0]}", flush=True)
 
 # Remove nan values
 N=data.shape[0]
@@ -190,25 +186,7 @@ MgMn = data["MG_FE"] - data["MN_FE"]
 ID = data["APOGEE_ID"]
 
 
-# Derive coordinates of stars in Sagittarius dwarf coordinate system.
-# Needed for selecting stars from the Sagittarius stream
-sgr_coords = Galcoords(ra=data["RA"], dec=data["DEC"], 
-                       l=data["GLON"], b=data["GLAT"],
-                       pm_ra=data["GAIAEDR3_PMRA"] / 1000.,
-                       pm_ra_e=data["GAIAEDR3_PMRA_ERROR"] / 1000.,
-                       pm_dec=data["GAIAEDR3_PMDEC"] / 1000.,
-                       pm_dec_e=data["GAIAEDR3_PMDEC_ERROR"] / 1000.,
-                       v_rad=data["VHELIO_AVG"], 
-                       v_rad_e=data["GAIAEDR3_DR2_RADIAL_VELOCITY_ERROR"],
-                       dist=np.array([astronn_dist_dict[ID] for ID in data["APOGEE_ID"]]),
-                       sigma_dist=np.array([astronn_dist_err_dict[ID] for ID in data["APOGEE_ID"]]),
-                       use_dist=True,
-                       usun=11.1,
-                       vrot_sun=248.,
-                       wsun=8.5,
-                       rsun=8.178)
 
-sgr_coords.calculate_sgr_system()
 
 
 # Define galactocentric coordinates
@@ -291,182 +269,21 @@ df = pd.DataFrame({"x": x.astype("float32"),
                    "APOGEE_ID": data["APOGEE_ID"],
                    "RA": data["RA"],
                    "DEC": data["DEC"],
-                   "GAL_LON": data["GLON"],
-                   "GAL_LAT": data["GLAT"],
                    "dist": np.array([astronn_dist_dict[ID] for ID in data["APOGEE_ID"]])*1e-3, #kpc
                    "PMRA": data["GAIAEDR3_PMRA"],
                    "PMDEC": data["GAIAEDR3_PMDEC"],
                    "RADIAL_VEL": data["VHELIO_AVG"],
                    "x_sun": x_sun,
                    "y_sun": y_sun,
-                   "z_sun": z_sun,
-                   "sgr_beta_gc": sgr_coords.beta_gc,
-                   "sgr_x": -sgr_coords.xs,
-                   "sgr_y": sgr_coords.ys,
-                   "sgr_z": sgr_coords.zs,
-                   "sgr_vz": sgr_coords.vzs,
-                   "sgr_Lz": -sgr_coords.xs*sgr_coords.vys + sgr_coords.ys*sgr_coords.vxs,
-                   "progID": ["None" for i in range(len(ID))]
+                   "z_sun": z_sun
                    })
 
-# Remove stars with positive energy (computation errors)
-N=df.shape[0]
-df = df[df["E"]<0].reset_index()
-print("Removed {:,} stars with positive energies".format(N-df.shape[0]), flush=True)
-
-#############################################################################
-#############################################################################
-# Select stars from the different substructures
-#############################################################################
-#############################################################################
-
-idx = np.arange(df.shape[0])
-
-# GES
-GES_mask = np.logical_and.reduce([(df.Lz**2<0.5e3**2), 
-                                  (df.E>-1.6e5), (df.E<-1.1e5)])
-df.loc[GES_mask, "progID"] = "GES"
-save_data(GES_mask, "GES")
-
-# Sagittarius
-sgr_mask = np.logical_and.reduce([df.sgr_beta_gc**2<30**2,
-                                  df.sgr_Lz>1.8e3, df.sgr_Lz<14e3,
-                                  df.sgr_vz>-150, df.sgr_vz<80,
-                                  ((df.sgr_x>0) | (df.sgr_x<-15)),
-                                  ((df.sgr_y>-5) | (df.sgr_y<-20)),
-                                  df.sgr_z>-10,
-                                  df.PMRA>-4,
-                                  (df.dist>10)
-                                  ])
-
-df.loc[sgr_mask, "progID"] = "Sagittarius"
-save_data(sgr_mask, "Sagittarius")
-
-# Helmi streams
-Helmi_mask = np.logical_and.reduce([df.Lz>0.75e3, df.Lz<1.7e3, 
-                                    df.Lperp>1.6e3, df.Lperp<3.2e3])
-
-df.loc[Helmi_mask, "progID"] = "Helmi"
-save_data(Helmi_mask, "Helmi")
-
-# Sequoia 
-# K19 selection
-K19_mask = np.logical_and.reduce([df.E>-1.35e5, df.E<-1e5,
-                                  df.Lz<0])
-eta = circularity(K19_mask)
-
-K19_mask = idx[K19_mask][(eta<-0.4) & (eta>-0.65)]
-df.loc[K19_mask, "progID"] = "Sequoia_K19"
-save_data(K19_mask, "Sequoia_K19")
-
-# M19 selection
-M19_mask = df.E>-1.5e5
-Jp, Jr, Jz = actions(M19_mask)
-Jtot = pow(Jp**2+Jr**2+Jz**2, 0.5)
-
-M19_mask = idx[M19_mask][(Jp/Jtot<-0.5) & ((Jz-Jr)/Jtot<0.1)]
-df.loc[M19_mask, "progID"] = "Sequoia_M19"
-save_data(M19_mask, "Sequoia_M19")
-
-# N20 selection
-N20_mask = np.logical_and.reduce([df.E>-1.6e5, 
-                                  df.Lz<-0.7e3,
-                                  df.FeH>-2,
-                                  df.FeH<-1.6,
-                                  df.dist<20 # excludes magellanic clouds
-                                  ])
-eta = circularity(N20_mask)
-
-N20_mask = idx[N20_mask][(eta<-0.15)]
-df.loc[N20_mask, "progID"] = "Sequoia_N20"
-save_data(N20_mask, "Sequoia_N20")
-
-# Arjuna
-Arjuna_mask = np.logical_and.reduce([df.E>-1.6e5, 
-                                     df.Lz<-0.7e3,
-                                     df.FeH>-1.6,
-                                     df.FeH<-0.7,
-                                     df.dist<20] # excludes magellanic clouds
-                                     )
-eta = circularity(Arjuna_mask)
-
-Arjuna_mask = idx[Arjuna_mask][(eta<-0.15)]
-df.loc[Arjuna_mask, "progID"] = "Arjuna"
-save_data(Arjuna_mask, "Arjuna")
-
-# Iitoi
-Iitoi_mask = np.logical_and.reduce([df.E>-1.6e5,
-                                    df.Lz<-0.7e3,
-                                    df.dist<20,
-                                    df.FeH<-2])
-eta = circularity(Iitoi_mask)
-
-Iitoi_mask = idx[Iitoi_mask][(eta<-0.15)]
-df.loc[Iitoi_mask, "progID"] = "Iitoi"
-save_data(Iitoi_mask, "Iitoi")
-
-
-# Thamnos selection 
-thamnos_mask = np.logical_and.reduce([df.E>-1.8e5, df.E<-1.6e5,
-                                      df.Lz<0])
-e = eccentricity(thamnos_mask)
-
-thamnos_mask = idx[thamnos_mask][(e<0.7)]
-df.loc[thamnos_mask, "progID"] = "Thamnos"
-save_data(thamnos_mask, "Thamnos")
-
-# Aleph selection
-aleph_mask = np.logical_and.reduce([df.vtheta>175, df.vtheta<300,
-                                    df.vr**2<75**2,
-                                    df.FeH>-0.8,
-                                    df.MgFe<0.27,
-                                    df.z**2>3**2
-                                    ])
-_, _, Jz = actions(aleph_mask)
-e = eccentricity(aleph_mask)
-
-aleph_mask = idx[aleph_mask][((Jz>170) & (Jz<210) & (e<0.3))]
-df.loc[aleph_mask, "progID"] = "Aleph"
-save_data(aleph_mask, "Aleph")
-
-# Nyx
-nyx_mask = np.logical_and.reduce([df.vr>110, df.vr<205,
-                                  df.vtheta>90, df.vtheta<195,
-                                  df.FeH>-0.7, df.FeH<-0.3, # added by me 
-                                  df.x_sun**2<3**2, 
-                                  df.y_sun**2<2**2,
-                                  df.z_sun**2<2**2])
-df.loc[nyx_mask, "progID"] = "Nyx"
-save_data(nyx_mask, "Nyx")
-
-# Wukong (LMS)
-LMS_mask = np.logical_and.reduce([df.Lz>0.2e3, df.Lz<1e3,
-                                  df.E>-1.7e5, df.E<-1.2e5,
-                                  df.FeH<-1.45,
-                                  df.z**2>3**2
-                                  ])
-e = eccentricity(LMS_mask)
-
-LMS_mask = idx[LMS_mask][((e>0.4) & (e<0.7))]
-df.loc[LMS_mask, "progID"] = "LMS"
-save_data(LMS_mask, "LMS")
-
-
-# Heracles
-chem_cuts = ((df.AlFe<-0.07) & (df.MgMn>=0.25)) | ((df.AlFe>=-0.07) & (df.MgMn>=4.25*df.AlFe+0.5475))
-Heracles_mask = np.logical_and.reduce([df.E>-2.6e5, df.E<-2e5,
-                                       df.FeH>-1.7,
-                                       chem_cuts])
-e = eccentricity(Heracles_mask)
-
-Heracles_mask = idx[Heracles_mask][e>0.6]
-df.loc[Heracles_mask, "progID"] ="Heracles"
-save_data(Heracles_mask, "Heracles")
+# Add column with satellites ID
+satellites_ID_dict = dict(zip(satellites_data["APOGEE_ID"], satellites_data["System"]))
+df["satelliteID"] = df["APOGEE_ID"].map(satellites_ID_dict)
 
 ################################################################
 # Save dataframe
-df.to_pickle(f"/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
+df.to_pickle(f"/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
 
 print(f"N stars in dataframe: {len(df):,}", flush=True)
-
-print(df['progID'].value_counts(), flush=True)
