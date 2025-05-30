@@ -23,21 +23,20 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
 # Load pre-processed apogee sample
 df = pd.read_pickle(f"{model_dir}apogee_ds_processed_Suite_ELFeHMgFe.pkl")
 
-substructures = ['GES', 'Sagittarius', 'Helmi',
+substructures = ['Arjuna', 'GES', 'Sagittarius', 'Helmi',
        'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
-       'LMS', 'Heracles']
+       'LMS', 'Heracles', 'Sequoia_ALL']
 
 for substructure in substructures:
     
-    df_sub = df[df[substructure+"_flag"]==1]
-    print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
     if substructure=="GES":
+        df_sub = df[df[substructure+"_flag"]==1]
         # Improve purity of GES sample
-        df_sub = df_sub[df_sub["FeH"]<-0.75]
+        df_sub = df_sub[df_sub["FeH"]<-0.6]
         print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
-    if substructure=="Sagittarius":
+    elif substructure=="Sagittarius":
         # Consider the stars that match with the selection of Hernquist
         satellites_data = pd.read_csv("/mnt/aridata1/users/ariasant/MW-sbi/data/member_list_fe_mg.txt")
         SGR_star_IDs = satellites_data[satellites_data["System"]=="Sgr"]["APOGEE_ID"].values
@@ -46,6 +45,16 @@ for substructure in substructures:
         df_sub = df_sub[(df_sub["r"]>5)&(df_sub["r"]<30)]
         print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
+    elif substructure=="Sequoia_ALL":
+        # Consider all the sequoia samples together
+        df_sub = df[(df["Sequoia_M19_flag"]==1) | 
+                    (df["Sequoia_K19_flag"]==1) | 
+                    (df["Sequoia_N20_flag"]==1)]
+        print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
+
+    else:
+        df_sub = df[df[substructure+"_flag"]==1]
+        print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
     
     data = df_sub[features].values

@@ -89,8 +89,6 @@ def eccentricity(idx_stars):
 
 def save_data(mask, filename):
 
-    print(f"Saving {filename} selection. N stars: {sum(mask):,}", flush=True)
-
     # Add selection flag to dataframe
     key = f"{filename}_flag"
     df[key] = np.zeros(df.shape[0], dtype=int)
@@ -99,6 +97,8 @@ def save_data(mask, filename):
     # Save subsample as a separate dataframe
     df_prog = df.loc[mask]
     df_prog.to_pickle(f"/mnt/aridata1/users/ariasant/MW-sbi/data/{filename}.pkl")
+
+    print(f"Saved {filename} selection. N stars: {len(df_prog):,}", flush=True)
 
 
 # Read APOGEE data
@@ -291,6 +291,8 @@ df = pd.DataFrame({"x": x.astype("float32"),
                    "APOGEE_ID": data["APOGEE_ID"],
                    "RA": data["RA"],
                    "DEC": data["DEC"],
+                   "GAL_LON": data["GLON"],
+                   "GAL_LAT": data["GLAT"],
                    "dist": np.array([astronn_dist_dict[ID] for ID in data["APOGEE_ID"]])*1e-3, #kpc
                    "PMRA": data["GAIAEDR3_PMRA"],
                    "PMDEC": data["GAIAEDR3_PMDEC"],

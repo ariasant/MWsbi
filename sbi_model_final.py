@@ -61,7 +61,7 @@ args = CLI.parse_args()
 features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
+dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
 output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/'
 
 filename = f"Suite_"+"".join(features)
@@ -96,6 +96,8 @@ df = pd.concat(sim_data, ignore_index=True)
 
 # Load Milky Way (target) data
 apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
+apogee_ds_satellites = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
+apogee_ds = pd.concat([apogee_ds, apogee_ds_satellites])
 apogee_ds.dropna(subset=features, inplace=True)
 # Select accreted stars
 obs_accreted = ((apogee_ds.AlFe<-0.07) & (apogee_ds.MgMn>=0.25)) | \
@@ -201,7 +203,7 @@ print(f"Y_test shape: {Y_test.shape}", flush=True)
 
 # Save scalers for future analysis
 pickle.dump(pt,open(f"{output_dir}/X_scaler_{filename}.pkl","wb"))
-np.savez(f"{output_dir}/min_values_{filename}.pkl", FeH=FeH_min, MgFe=MgFe_min)
+np.savez(f"{output_dir}/min_values_{filename}", FeH=FeH_min, MgFe=MgFe_min)
 pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
 # Save processed Milky Way data
 pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))

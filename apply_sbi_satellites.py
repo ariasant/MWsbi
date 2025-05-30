@@ -13,7 +13,7 @@ features=["E","L","FeH","MgFe"]
 posterior = pickle.load(open(f"{model_dir}Suite_ELFeHMgFe.pkl","rb"))
 
 # Data processing tools
-chem_min_values = np.load(f"{model_dir}min_values_Suite_ELFeHMgFe.npz")
+chem_min_values = np.load(f"{model_dir}min_values_Suite_ELFeHMgFe.pkl.npz")
 FeH_min = chem_min_values["FeH"]
 MgFe_min = chem_min_values["MgFe"]
 X_scaler = pickle.load(open(f"{model_dir}X_scaler_Suite_ELFeHMgFe.pkl","rb")) # star properties scaler
@@ -26,13 +26,13 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
 
 # Load satellites data
 df = pd.read_pickle(f"/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
+df = df[(df["E"]<0)&(df["satelliteID"]!="GSE")]
 
 # Preprocess dataframe
 df["E"] *= -1
 df["FeH"] -= FeH_min
 df["MgFe"] -= MgFe_min
 
-df = df[(df["E"]<0) & (df["FeH"]<0) & (df["MgFe"]<0)]
 df[features] = X_scaler.transform(df[features].values)
 
 
@@ -78,7 +78,7 @@ for satellite in df["satelliteID"].unique():
     posterior_samples = np.concatenate(posterior_samples, axis=0)
     
     # Save posterior samples
-    pickle.dump(posterior_samples, open(f"{output_dir}{satellite}.pkl","wb"))
+    pickle.dump(posterior_samples, open(f"{output_dir}{satellite}_sat.pkl","wb"))
     
     # Plot posterior samples
     fig = corner.corner(posterior_samples, 
@@ -89,6 +89,6 @@ for satellite in df["satelliteID"].unique():
                         show_titles=True,
                         title_kwargs={'fontsize':8},
                         verbose=True)
-    fig.savefig(f"{output_dir}{satellite}.pdf",dpi=400)
+    fig.savefig(f"{output_dir}{satellite}_sat.pdf",dpi=400)
     fig.clf()
 
