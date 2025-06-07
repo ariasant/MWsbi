@@ -7,12 +7,16 @@ import pandas as pd
 import pickle
 from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import train_test_split
+import time
 
 import sys
 sys.path.append("/mnt/aridata1/users/ariasant/auriga-sbi/")
 from domain_shift import DataProcessor
 import get_results
 import training
+
+sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
+import fishnets
 
 
 def plot_stars_data(dfs: list, RANGE=None):
@@ -62,7 +66,7 @@ features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
 dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/'
 
 filename = f"Suite_"+"".join(features)
 
@@ -182,7 +186,7 @@ for progID in df["progID"].unique():
     for i in range(n):
         idx_sample = np.random.randint(0, len(prog_data), size=100)
 
-        X_train.append(prog_data[features].values[idx_sample].reshape(-1))
+        X_train.append(prog_data[features].values[idx_sample])
         Y_train.append(prog_data[parameters].values[idx_sample][0])
 
 X_train = np.stack(X_train)
@@ -216,8 +220,50 @@ pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filena
 ####################################################################################
 ####################################################################################
 
+# Learn data compression model with fishnet
+compression_model = fishnets.FISHNET(n_params=4,
+                                     n_d=100,
+                                     n_features=len(features),
+                                     n_hidden_layers=2,
+                                     n_nodes_per_layer=256)
+
+# Train the compression model
+print("Training compression model...", flush=True)
+start = time.time()
+training_results = compression_model.train(data_=X_train,
+                                            theta_=Y_train,
+                                            val_data_=X_test,
+                                            val_theta_=Y_test,
+                                            batch_size=200,
+                                            epochs=3000)
+end = time.time()
+print(f"Compression model trained in {end-start:.2f} seconds", flush=True)
+
+# Save the compression model
+filename = f"{output_dir}{filename}_compression_model.pkl"
+pickle.dump(compression_model, open(filename, "wb"))
+
+# Plot training 
+fig, ax = mpl.pyplot.subplots()
+ax.plot(training_results['losses'], label="Training Loss")
+ax.plot(training_results['val_losses'], label="Validation Loss")
+ax.set_xlabel("Epochs")
+ax.set_ylabel("Loss (log)")
+ax.set_ylim([1, -10])
+ax.legend()
+fig.savefig(f"{output_dir}{filename}_compression_model_training.pdf", dpi=300, bbox_inches='tight')
+
+
+# Compress data
+print("Compressing data...", flush=True)
+summary_stats, _, __ = compression_model(X_train)
+
+summary_stats_test, _, __ = compression_model(X_test)
+# Update the test dictionary with the compressed data
+test_dictionary["X"] = summary_stats_test
+
 # Train NDE model
-posterior_model = training.NPE_training(X_train=X_train,
+posterior_model = training.NPE_training(X_train=summary_stats,
                                         Y_train=Y_train,
                                         prior_ranges=[scaler_params.transform(np.array([0,6,8,-3])[None,:] )[0],
                                                       scaler_params.transform(np.array([14,11,12,0])[None,:] )[0]],

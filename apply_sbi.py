@@ -5,8 +5,8 @@ import pandas as pd
 import pickle
 import torch
 
-model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
+model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
 
 features=["E","L","FeH","MgFe"]
 
