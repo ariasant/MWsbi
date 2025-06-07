@@ -1,23 +1,33 @@
 from astropy.cosmology import Planck15
 import auriga_public.auriga_public as ap
 import math
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.signal import medfilt
 import pickle
 
-def correct_unphysical_drops(series, threshold=0.95):
+def correct_unphysical_drops(series, threshold=0.95, trend_size=10):
     
     corrected_series = series.copy()
 
     for i in range(1, len(series)-1):
 
-        if series[i] < threshold * series[i - 1]:  # Detect abrupt drop
-            corrected_series[i] = (series[i-1] + series[i+1])/2
+        # Consider the mass estimate at the 10 time steps before
+        mass_trend = series[i:i + trend_size]
+
+        if series[i] < threshold * max(mass_trend):  # Detect abrupt drop
+            corrected_series[i] = max(mass_trend)  # Replace with the maximum of the trend
     
     return corrected_series
+
+
+
 
 simulation_dir = '/mnt/aridata1/users/arirgran/Auriga/level4/Original/'
 
 # Assembly history dictionary
 output_dict = {}
+plot_dir = '/mnt/aridata1/users/ariasant/MW-sbi/assembly_history_plots/'
 
 for galaxy_num in range(1,31):
 
@@ -30,15 +40,24 @@ for galaxy_num in range(1,31):
     treeobj.ReturnTreeNode(0, field='SubhaloMassType', data_out=subhalo_mass_MW_at_snap, mainprogonly=True) #10^10 M_sun
 
     subhalo_mass_MW_at_snap = [sum(masses) for masses in subhalo_mass_MW_at_snap]
-    
-    # Correct unphysical drops in mass
-    subhalo_mass_MW_at_snap = correct_unphysical_drops(subhalo_mass_MW_at_snap, threshold=0.95)
 
     # Mass of the MW vs redshift
     subhalo_mass_MW_at_snap = [math.log10(masses)+10 for masses in subhalo_mass_MW_at_snap] 
 
     # Loolback time
-    time = [Planck15.lookback_time(z).value for z in redshifts]
+    time = np.array([Planck15.lookback_time(z).value for z in redshifts])
+
+    fig, ax = plt.subplots()
+    ax.plot(time, subhalo_mass_MW_at_snap, label=f"original")
+    ax.plot(time, medfilt(subhalo_mass_MW_at_snap, kernel_size=11), label="smoothed")
+
+    # Correct unphysical drops in mass
+    subhalo_mass_MW_at_snap = correct_unphysical_drops(subhalo_mass_MW_at_snap, threshold=0.99)
+
+    ax.plot(time, subhalo_mass_MW_at_snap, label=f"corrected")
+    ax.legend()
+    fig.savefig(f"{plot_dir}MW_{galaxy_num}.png")
+
 
     output_dict[f"{galaxy_num}"] = (time, subhalo_mass_MW_at_snap)
 
@@ -62,14 +81,22 @@ for galaxy_num in range(1,11):
 
     subhalo_mass_MW_at_snap = [sum(masses) for masses in subhalo_mass_MW_at_snap]
 
-    # Correct unphysical drops in mass
-    subhalo_mass_MW_at_snap = correct_unphysical_drops(subhalo_mass_MW_at_snap, threshold=0.95)
-
     # Mass of the MW vs redshift
     subhalo_mass_MW_at_snap = [math.log10(masses)+10 for masses in subhalo_mass_MW_at_snap] 
 
     # Loolback time
     time = [Planck15.lookback_time(z).value for z in redshifts]
+
+    fig, ax = plt.subplots()
+    ax.plot(time, subhalo_mass_MW_at_snap, label=f"original")
+    ax.plot(time, medfilt(subhalo_mass_MW_at_snap, kernel_size=11), label="smoothed")
+
+    # Correct unphysical drops in mass
+    subhalo_mass_MW_at_snap = correct_unphysical_drops(subhalo_mass_MW_at_snap, threshold=0.99)
+
+    ax.plot(time, subhalo_mass_MW_at_snap, label=f"corrected")
+    ax.legend()
+    fig.savefig(f"{plot_dir}low_mass_MW_{galaxy_num}.png")
 
     output_dict[f"L{galaxy_num}"] = (time, subhalo_mass_MW_at_snap)
 
