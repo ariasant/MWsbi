@@ -42,6 +42,8 @@ for galaxy_num in range(1,31):
 
     output_dict[f"{galaxy_num}"] = (time, subhalo_mass_MW_at_snap)
 
+    print(f"Processed galaxy {galaxy_num}.")
+
 # Repeat for low mass Milky Ways
 simulation_dir = '/mnt/aridata1/users/arirgran/Auriga/level4/LowMassMWs/'
 
@@ -58,16 +60,20 @@ for galaxy_num in range(1,11):
     treeobj.ReturnTreeNode(0, field='Redshift', data_out=redshifts, mainprogonly=True)
     treeobj.ReturnTreeNode(0, field='SubhaloMassType', data_out=subhalo_mass_MW_at_snap, mainprogonly=True) #10^10 M_sun
 
+    subhalo_mass_MW_at_snap = [sum(masses) for masses in subhalo_mass_MW_at_snap]
+
     # Correct unphysical drops in mass
     subhalo_mass_MW_at_snap = correct_unphysical_drops(subhalo_mass_MW_at_snap, threshold=0.95)
 
     # Mass of the MW vs redshift
-    subhalo_mass_MW_at_snap = [math.log10(sum(masses))+10 for masses in subhalo_mass_MW_at_snap] 
+    subhalo_mass_MW_at_snap = [math.log10(masses)+10 for masses in subhalo_mass_MW_at_snap] 
 
     # Loolback time
     time = [Planck15.lookback_time(z).value for z in redshifts]
 
     output_dict[f"L{galaxy_num}"] = (time, subhalo_mass_MW_at_snap)
+
+    print(f"Processed galaxy {galaxy_num}.")
 
 # Save assembly histories
 pickle.dump(output_dict, open("/mnt/aridata1/users/ariasant/MW-sbi/auriga_galaxies_mass_assembly.pkl","wb"))

@@ -13,7 +13,7 @@ features=["E","L","FeH","MgFe"]
 posterior = pickle.load(open(f"{model_dir}Suite_ELFeHMgFe.pkl","rb"))
 
 # Data processing tools
-chem_min_values = np.load(f"{model_dir}min_values_Suite_ELFeHMgFe.pkl.npz")
+chem_min_values = np.load(f"{model_dir}min_values_Suite_ELFeHMgFe.npz")
 FeH_min = chem_min_values["FeH"]
 MgFe_min = chem_min_values["MgFe"]
 X_scaler = pickle.load(open(f"{model_dir}X_scaler_Suite_ELFeHMgFe.pkl","rb")) # star properties scaler

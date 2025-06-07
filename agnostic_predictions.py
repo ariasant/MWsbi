@@ -59,7 +59,7 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'MMR (log)']
 
 # Load pre-processed apogee sample
-df = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
+df = pd.read_pickle(f"{model_dir}apogee_ds_processed_Suite_ELFeHMgFe.pkl")
 print(f"N stars in APOGEE ds: {len(df)}", flush=True)
 
 # Select accreted stars
@@ -114,7 +114,7 @@ fig.savefig(f"{output_dir}alphaIron_accreted.png", dpi=1000)
 #####################################################################################
 #####################################################################################
 
-df_accreted.dropna(axis=0, subset=features, inplace=True)
+df_accreted = df_accreted.dropna(axis=0, subset=features)
 
 # Identify the 100-nearest neighbors in the [Fe/H] vs [Mg/Fe] plane for a point
 NNs_model = NearestNeighbors(n_neighbors=100, algorithm='auto')
@@ -127,7 +127,7 @@ group_properties = []
 
 for idx in idx_neighbours:
 
-    NN_data = df.loc[idx, features].values
+    NN_data = df.iloc[idx][features].values.reshape(-1)
 
     # Sample 1000 times from the posterior conditioned on the nearest-neighbours
     theta_samples = posterior.sample((n_samples,), 

@@ -1,4 +1,5 @@
 import corner
+import math
 import numpy as np
 import pandas as pd
 import pickle
@@ -22,7 +23,6 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
 
 # Load pre-processed apogee sample
 df = pd.read_pickle(f"{model_dir}apogee_ds_processed_Suite_ELFeHMgFe.pkl")
-df["FeH"] = df["FeH"] 
 
 substructures = ['Arjuna', 'GES', 'Sagittarius', 'Helmi',
        'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
@@ -30,6 +30,10 @@ substructures = ['Arjuna', 'GES', 'Sagittarius', 'Helmi',
 
 for substructure in substructures:
     
+    if substructure!="Heracles":
+        df_sub = df[df[substructure+"_flag"]==1]
+        # Remove stars from the GES sample that are too close to the Galaxy centre
+        df_sub = df_sub[(df_sub.GAL_LAT**2>20**2) & (df_sub.GAL_LON**2>20**2)]
 
     if substructure=="GES":
         df_sub = df[df[substructure+"_flag"]==1]
@@ -39,11 +43,10 @@ for substructure in substructures:
 
     elif substructure=="Sagittarius":
         # Consider the stars that match with the selection of Hernquist
-        satellites_data = pd.read_csv("/mnt/aridata1/users/ariasant/MW-sbi/data/member_list_fe_mg.txt")
-        SGR_star_IDs = satellites_data[satellites_data["System"]=="Sgr"]["APOGEE_ID"].values
-        df_sub = df[df["APOGEE_ID"].isin(SGR_star_IDs)]
-        # Ignore stars too close to Galaxy centre
-        df_sub = df_sub[(df_sub["r"]>5)&(df_sub["r"]<30)]
+        #satellites_data = pd.read_csv("/mnt/aridata1/users/ariasant/MW-sbi/data/member_list_fe_mg.txt")
+        #SGR_star_IDs = satellites_data[satellites_data["System"]=="Sgr"]["APOGEE_ID"].values
+        #df_sub = df[df["APOGEE_ID"].isin(SGR_star_IDs)]
+        df_sub = df[df[substructure+"_flag"]==1]
         print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
     elif substructure=="Sequoia_ALL":
@@ -53,30 +56,20 @@ for substructure in substructures:
                     (df["Sequoia_N20_flag"]==1)]
         print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
-    else:
-        df_sub = df[df[substructure+"_flag"]==1]
-        print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
-
     
     data = df_sub[features].values
 
-    if len(data)>100:
-        # Select 10 samples of 100 stars each from data
-        # get how many times you can sample from the progenitor
-        n_samples = int(len(data)/100)*10
-        data_samples = [data[np.random.randint(0,len(data),size=100)].flatten() for i in range(n_samples)]
-    else:
-        data_samples = [data[np.random.randint(0,len(data),size=100)].flatten()]
+    # Select 10 samples of 100 stars each from data
+    # get how many times you can sample from the progenitor
+    n_samples = math.ceil(len(data)/100)*10
+    data_samples = [data[np.random.randint(0,len(data),size=100)].flatten() for i in range(n_samples)]
 
     # Sample the posterior of the progenitor properties as conditioned by each data sample
     posterior_samples = []
     for data_sample in data_samples:
 
         # Decide how many samples to get from the posterior
-        if len(data_samples)>1:
-            n_samples = 100
-        else:
-            n_samples = 1000
+        n_samples = 100
         # Get posterior samples
         theta_samples = posterior.sample((n_samples,), 
                                 torch.Tensor(data_sample).to(device="cuda"))
