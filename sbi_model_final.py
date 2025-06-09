@@ -74,6 +74,7 @@ substructures = ['GES', 'Sagittarius', 'Helmi',
        'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
        'LMS', 'Heracles']
 
+
 ###########################################################################################
 # Data preparation
 ###########################################################################################
@@ -213,7 +214,6 @@ pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb")
 pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
 
-
 ####################################################################################
 ####################################################################################
 # Training
@@ -231,17 +231,17 @@ compression_model = fishnets.FISHNET(n_params=4,
 print("Training compression model...", flush=True)
 start = time.time()
 training_results = compression_model.train(data_=X_train,
-                                            theta_=Y_train,
-                                            val_data_=X_test,
-                                            val_theta_=Y_test,
-                                            batch_size=200,
-                                            epochs=3000)
+                                           theta_=Y_train,
+                                           val_data_=X_test,
+                                           val_theta_=Y_test,
+                                           batch_size=1024,
+                                           lr=1e-4,
+                                           epochs=500)
 end = time.time()
 print(f"Compression model trained in {end-start:.2f} seconds", flush=True)
 
-# Save the compression model
-filename = f"{output_dir}{filename}_compression_model.pkl"
-pickle.dump(compression_model, open(filename, "wb"))
+# Save the compression model weights
+pickle.dump(compression_model.w, open(f"{output_dir}{filename}_compression_model_w.pkl", "wb"))
 
 # Plot training 
 fig, ax = mpl.pyplot.subplots()
@@ -249,9 +249,10 @@ ax.plot(training_results['losses'], label="Training Loss")
 ax.plot(training_results['val_losses'], label="Validation Loss")
 ax.set_xlabel("Epochs")
 ax.set_ylabel("Loss (log)")
-ax.set_ylim([1, -10])
+ax.set_ylim([10, -10])
 ax.legend()
 fig.savefig(f"{output_dir}{filename}_compression_model_training.pdf", dpi=300, bbox_inches='tight')
+
 
 
 # Compress data

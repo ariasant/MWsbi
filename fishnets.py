@@ -12,7 +12,8 @@ from typing import Sequence, Any, Callable
 Array = Any
 
 
-
+# Print JAX device
+print(jax.devices(), flush=True)
 
 def fill_triangular(x):
     m = x.shape[0] # should be n * (n+1) / 2
@@ -115,7 +116,7 @@ class FISHNET():
 
         mle_pred, score, fisher = jax.vmap(_app)(data.reshape(-1, self.n_d, self.n_params)[:])
 
-        return mle_pred, score, fisher
+        return np.array(mle_pred), score, fisher
 
     def train(self, 
               data_: np.ndarray,
@@ -134,10 +135,10 @@ class FISHNET():
 
         if val_data_ is not None:
             val_data_ = jnp.array(val_data_)
-            val_data_.reshape(-1, batch_size, self.n_d, self.n_features)
+            val_data_.reshape(-1, val_data_.shape[0], self.n_d, self.n_features)
         if val_theta_ is not None:
             val_theta_ = jnp.array(val_theta_)
-            val_theta_.reshape(-1, batch_size, self.n_params)
+            val_theta_.reshape(-1, val_data_.shape[0], self.n_params)
 
 
         # Initialise loss function
@@ -185,8 +186,12 @@ class FISHNET():
             
             key,rng = jax.random.split(key)
 
+            # Select a number of training examples which is divisible by the batch size
+            n_train = (data_.shape[0]//batch_size)*batch_size
+
             # shuffle data every epoch
-            randidx = jax.random.permutation(key, jnp.arange(theta_.reshape(-1, self.n_params).shape[0]), independent=True)
+            randidx = jax.random.permutation(key, jnp.arange(theta_.reshape(-1, self.n_params).shape[0]), independent=True)[:n_train]
+            
             _data = data_.reshape(-1, self.n_d, self.n_features)[randidx].reshape(batch_size, -1, self.n_d, self.n_features)
             _theta = theta_.reshape(-1, self.n_params)[randidx].reshape(batch_size, -1, self.n_params)
 

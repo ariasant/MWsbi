@@ -4,6 +4,10 @@ import pandas as pd
 import pickle
 import torch
 
+import sys
+sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
+import fishnets
+
 model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
 output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
 
@@ -18,6 +22,16 @@ FeH_min = chem_min_values["FeH"]
 MgFe_min = chem_min_values["MgFe"]
 X_scaler = pickle.load(open(f"{model_dir}X_scaler_Suite_ELFeHMgFe.pkl","rb")) # star properties scaler
 theta_scaler = pickle.load(open(f"{model_dir}theta_scaler_Suite_ELFeHMgFe.pkl","rb")) # progenitor properties scaler
+
+# Compression model
+compression_model = fishnets.FISHNET(n_params=4,
+                                     n_d=100,
+                                     n_features=len(features),
+                                     n_hidden_layers=2,
+                                     n_nodes_per_layer=256)
+# Load trained weights
+w = pickle.load(open(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl","rb")) 
+compression_model.w = w
 
 plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'log($M_{*}/M_{\odot}$)',
@@ -47,10 +61,10 @@ for satellite in df["satelliteID"].unique():
         # Select 10 samples of 100 stars each from data
         # get how many times you can sample from the progenitor
         n_samples = int(len(data)/100)*10
-        data_samples = [data[np.random.randint(0,len(data),size=100)].flatten() for i in range(n_samples)]
+        data_samples = [data[np.random.randint(0,len(data),size=100)] for i in range(n_samples)]
     
     elif len(data)>25:
-        data_samples = [data[np.random.randint(0,len(data),size=100)].flatten()]
+        data_samples = [data[np.random.randint(0,len(data),size=100)]]
     
     else:
         print(f"Not enough data for {satellite}.", flush=True)
@@ -59,6 +73,9 @@ for satellite in df["satelliteID"].unique():
     # Sample the posterior of the progenitor properties as conditioned by each data sample
     posterior_samples = []
     for data_sample in data_samples:
+
+        # Compress data features
+        data_sample, _, __ = compression_model(data_sample)
 
         # Decide how many samples to get from the posterior
         if len(data_samples)>1:

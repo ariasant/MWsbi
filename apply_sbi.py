@@ -5,6 +5,10 @@ import pandas as pd
 import pickle
 import torch
 
+import sys
+sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
+import fishnets
+
 model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
 output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
 
@@ -20,6 +24,16 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'log($M_{*}/M_{\odot}$)',
              'log($M/M_{\odot}$)', 
              'MMR (log)']
+
+# Compression model
+compression_model = fishnets.FISHNET(n_params=4,
+                                     n_d=100,
+                                     n_features=len(features),
+                                     n_hidden_layers=2,
+                                     n_nodes_per_layer=256)
+# Load trained weights
+w = pickle.load(open(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl","rb")) 
+compression_model.w = w
 
 # Load pre-processed apogee sample
 df = pd.read_pickle(f"{model_dir}apogee_ds_processed_Suite_ELFeHMgFe.pkl")
@@ -62,14 +76,18 @@ for substructure in substructures:
     # Select 10 samples of 100 stars each from data
     # get how many times you can sample from the progenitor
     n_samples = math.ceil(len(data)/100)*10
-    data_samples = [data[np.random.randint(0,len(data),size=100)].flatten() for i in range(n_samples)]
+    data_samples = [data[np.random.randint(0,len(data),size=100)] for i in range(n_samples)]
 
     # Sample the posterior of the progenitor properties as conditioned by each data sample
     posterior_samples = []
     for data_sample in data_samples:
 
+        # Compress data features
+        data_sample, _, __ = compression_model(data_sample)
+
         # Decide how many samples to get from the posterior
         n_samples = 100
+
         # Get posterior samples
         theta_samples = posterior.sample((n_samples,), 
                                 torch.Tensor(data_sample).to(device="cuda"))
