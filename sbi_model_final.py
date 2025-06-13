@@ -1,51 +1,23 @@
 import argparse
-import corner
 import matplotlib as mpl
 import numpy as np
 import os
 import pandas as pd
 import pickle
-from sklearn.preprocessing import RobustScaler
+from scipy.spatial.distance import cdist
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import RobustScaler
+import time
+import torch
+from torch_geometric.data import Data
+from torch_geometric.loader.dataloader import Collater
 
 import sys
 sys.path.append("/mnt/aridata1/users/ariasant/auriga-sbi/")
 from domain_shift import DataProcessor
-import get_results
-import training
-
-
-def plot_stars_data(dfs: list, RANGE=None):
-
-    # Initialize color list for the different dataframes
-    colors = [mpl.cm.tab10(i/len(dfs)) for i in range(len(dfs))]
-
-    for i, df in enumerate(dfs):
-
-        if i==0:
-            fig = corner.corner(df[features].values,
-                                color=colors[i],
-                                labels=features,
-                                bins=20,
-                                plot_contours=True,
-                                plot_datapoints=False,
-                                fill_contours=True,
-                                hist_kwargs={"density": True},
-                                alpha=0.5,
-                                range=RANGE
-                                )
-        else:
-            corner.corner(df[features].values,
-                            color=colors[i],
-                            bins=20,
-                            plot_contours=True,
-                            plot_datapoints=False,
-                            fill_contours=True,
-                            hist_kwargs={"density": True},
-                            alpha=0.5,
-                            range=RANGE,
-                            fig=fig)
-    return fig
+sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
+import sbi_training
+import sbi_results
 
 
 
@@ -61,8 +33,8 @@ args = CLI.parse_args()
 features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/'
+dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/gnn/"
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/gnn/'
 
 filename = f"Suite_"+"".join(features)
 
@@ -87,7 +59,7 @@ for file in os.listdir(data_dir):
     df = df[(df["E"]<0) & (df["L"]>0)]
 
     # Shift chemical abundances
-    df["FeH"] = df["FeH"]-0.4
+    df["FeH"] = df["FeH"]-0.2
     df["MgFe"] = df["MgFe"]+0.4
 
     sim_data.append(df)
@@ -108,14 +80,7 @@ obs_accreted = np.logical_or.reduce([obs_accreted]+[apogee_ds[f"{substructure}_f
                                                          'Iitoi', 'Thamnos','LMS', 'Heracles']])
 
 
-
 obs_data = apogee_ds
-
-# Plot initial data
-fig = plot_stars_data([df, obs_data, obs_data[obs_accreted]],
-                      RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-0.2, 0.6)])
-fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='tight')
-
 
 # Preprocess data
 sim_data, obs_data, pt, FeH_min, MgFe_min = DataProcessor(features=features,
@@ -131,37 +96,6 @@ obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_fl
                                                          'Iitoi', 'Thamnos','LMS', 'Heracles']])
 apogee_ds_processed = obs_data[obs_accreted]
 
-# Plot data after processing
-fig = plot_stars_data([df, obs_data, apogee_ds_processed],
-                      RANGE=[(-3.3,3.3) for _ in range(len(features))])
-fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
-
-## Print the number of stars in each substructure of the MW before and after removing outliers
-print("Counting stars in each substructure of the MW before and after removing outliers:", flush=True)
-for substructure in substructures:
-    n_before = sum(apogee_ds[f"{substructure}_flag"]==1)
-    n_after = sum(apogee_ds_processed[f"{substructure}_flag"]==1)
-    print("="*50, flush=True)
-    print(f"{substructure}: {n_before} -> {n_after}", flush=True)
-    print("="*50, flush=True)
-
-    # Plot the stars in each substructure
-    fig = plot_stars_data([df, apogee_ds_processed[apogee_ds_processed[f"{substructure}_flag"]==1]])
-    fig.savefig(f"{output_dir}transformed_data_{filename}_shifted_{substructure}.pdf", dpi=300, bbox_inches='tight')
-
-
-# Plot merger parameters
-fig = corner.corner(df[parameters].values,
-                    color='k',
-                    labels=parameters,
-                    bins=20,
-                    plot_contours=False,
-                    plot_datapoints=False,
-                    fill_contours=False,
-                    hist_kwargs={"density": True})
-fig.savefig(f"{output_dir}merger_parameters_{filename}.pdf", dpi=300, bbox_inches='tight')
-
-
 # Initialize the scaler for the merger parameters
 scaler_params = RobustScaler()
 # Scale the merger parameters
@@ -170,36 +104,63 @@ df[parameters] = scaler_params.fit_transform(df[parameters].values)
 print(f"N progID: {len(df['progID'].unique())}", flush=True)
 
 # Create datasets for training 
-X_train, Y_train = [], []
-n = 100 # number of samples per progenitor
+graphs = []
+
+max_nodes = 1000  # maximum number of nodes per graph
 
 for progID in df["progID"].unique():
     # Get the data for the current progenitor
-    prog_data = df[df["progID"]==progID]
-    if len(prog_data) < 100:
-        continue
-    # Sample the data n times
-    for i in range(n):
-        idx_sample = np.random.randint(0, len(prog_data), size=100)
+    prog_data = df[df["progID"] == progID]
+    n_nodes = prog_data.shape[0]
+    if n_nodes < 100:
+        continue  # skip very small progenitors
 
-        X_train.append(prog_data[features].values[idx_sample].reshape(-1))
-        Y_train.append(prog_data[parameters].values[idx_sample][0])
+    # Sample up to max_nodes
+    if n_nodes > max_nodes:
+        n_samples = min(n_nodes // max_nodes, 10)
+        prog_data_list = [prog_data.sample(n=max_nodes, random_state=42) for i in range(n_samples)]
+        n_nodes = max_nodes
+    else:
+        prog_data_list = [prog_data]
 
-X_train = np.stack(X_train)
-Y_train = np.stack(Y_train)
+    for prog_data in prog_data_list:
+        # Node features: shape (n_nodes, n_features)
+        node_features = torch.tensor(prog_data[features].values, dtype=torch.float)
 
+        # Compute pairwise distances in feature space
+        edge_weights = cdist(node_features, node_features, metric='euclidean')  # shape (n_nodes, n_nodes)
 
-# Split the data into training and test(validation) sets
-X_train, X_test, Y_train, Y_test = train_test_split(X_train, Y_train, test_size=0.1)
-test_dictionary = {"X": X_test,
-                   "Y": Y_test,
-                   "ID": [f"{i:05}" for i in range(len(Y_test))]}
+        # Create edge index and edge attributes for a fully connected graph
+        row_idx, col_idx = np.where(np.ones((n_nodes, n_nodes)) - np.eye(n_nodes))
+        edge_index = torch.tensor(np.vstack([row_idx, col_idx]), dtype=torch.int64)
+        edge_attr = torch.tensor(edge_weights[row_idx, col_idx][:, None], dtype=torch.float)  # shape (num_edges, 1)
 
-print(f"X_train shape: {X_train.shape}", flush=True)
-print(f"Y_train shape: {Y_train.shape}", flush=True)
-print(f"X_test shape: {X_test.shape}", flush=True)
-print(f"Y_test shape: {Y_test.shape}", flush=True)
-    
+        # Create torch_geometric Data object
+        data = Data(
+            x=node_features,           # Node features
+            edge_index=edge_index,     # Edge indices (2, num_edges)
+            edge_attr=edge_attr,       # Edge attributes (num_edges, 1)
+            y=torch.tensor(prog_data[parameters].values[0], dtype=torch.float)[None,:], # merger parameters to infer
+            progID=progID,             # Store progID for reference
+        )
+        graphs.append(data)
+
+data = graphs
+# output (input, output) pairs
+# use pyg's collater
+collater = Collater(data)
+
+# output (input, output) pairs
+def collate_fn(batch):
+    batch = collater(batch)
+    return batch, batch.y
+
+# Save a fraction of data examples for validation
+train_data, val_data = train_test_split(data, test_size=0.2)
+
+print(f"Number of training examples: {len(train_data):,}", flush=True)
+print(f"Number of validation examples: {len(val_data):,}", flush=True)
+
 
 # Save scalers for future analysis
 pickle.dump(pt,open(f"{output_dir}/X_scaler_{filename}.pkl","wb"))
@@ -208,6 +169,7 @@ pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb")
 # Save processed Milky Way data
 pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
+pickle.dump(data, open(f"{output_dir}/data.pkl", "wb"))
 
 
 ####################################################################################
@@ -216,13 +178,19 @@ pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filena
 ####################################################################################
 ####################################################################################
 
-# Train NDE model
-posterior_model = training.NPE_training(X_train=X_train,
-                                        Y_train=Y_train,
-                                        prior_ranges=[scaler_params.transform(np.array([0,6,8,-3])[None,:] )[0],
-                                                      scaler_params.transform(np.array([14,11,12,0])[None,:] )[0]],
-                                        filename=filename,
-                                        output_dir=output_dir)
+start = time.time()
+print("Training NPE model...", flush=True)
+posterior_model = sbi_training.NPE_training(train_data=train_data,
+                                            val_data=val_data,
+                                            collate_fn=collate_fn,
+                                            prior_ranges=(scaler_params.transform(np.array([0,6,8,-3])[None,:] )[0],
+                                                          scaler_params.transform(np.array([14,11,12,0])[None,:] )[0]),
+                                            batch_size=32,
+                                            filename=filename,
+                                            output_dir=output_dir
+                                            )
+end = time.time()
+print("Model trained in {:.0f} minutes".format((end-start)/60), flush=True)
 
 
 ####################################################################################
@@ -231,12 +199,12 @@ posterior_model = training.NPE_training(X_train=X_train,
 ####################################################################################
 ####################################################################################
 
+samples = sbi_training.validation(posterior_ensemble=posterior_model,
+                            val_data=val_data,
+                            filename=filename,
+                            output_dir=output_dir)
 
-# Sample parameters for test galaxy
-samples = training.validation(posterior_ensemble=posterior_model,
-                              test_dictionary=test_dictionary,
-                              filename=filename,
-                              output_dir=output_dir)
+
     
 # Scale back the merger parameters into the original representation
 for progID in samples.keys():
@@ -258,18 +226,18 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'MMR (log)']
 plot_ranges=[[0.1,13.9],[5.9,10.9],[7.1,11.9],[-3.2,-0.1]]
 
-get_results.cross_validation_plot(samples=[samples],
+sbi_results.cross_validation_plot(samples=[samples],
                                   percentile_range=[16,84],
                                   plot_labels=plot_labels,
                                   plot_ranges=plot_ranges,
                                   filename=f'{output_dir}cross_validation_1684_{filename}.png')
 
 # Save table with quantitative results 
-get_results.rms_table_per_galaxy(samples={"SUITE":samples},
+sbi_results.rms_table_per_galaxy(samples={"SUITE":samples},
                                  parameters=parameters,
                                  filename=f'{output_dir}rms_table_{filename}.csv')
 
-get_results.count_predictions_within_range(samples={"SUITE":samples},
+sbi_results.count_predictions_within_range(samples={"SUITE":samples},
                                            parameters=parameters,
                                            percentile_range=[16,84],
                                            filename=f'{output_dir}range_table_{filename}_1684.csv')

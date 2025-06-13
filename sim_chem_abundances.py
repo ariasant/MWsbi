@@ -2,98 +2,169 @@ import auriga_public.auriga_public as ap
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pickle
 import seaborn as sns
 
 
-halo = 6
+def load_snapshot(halo: int,
+                  simulation_dir: str):
+    attrstoload = ['Coordinates', 'Velocities',  'Masses', 'Potential', 'ParticleIDs',
+                    'GFM_StellarFormationTime', 'GFM_Metals', 'GFM_StellarPhotometrics']
 
-attrstoload = ['Coordinates', 'Velocities',  'Masses', 'Potential', 'ParticleIDs',
-                   'GFM_StellarFormationTime', 'GFM_Metals', 'GFM_StellarPhotometrics']
+    # Load snapshot data                                                        
+    snapobj = ap.snapshot.load_snapshot(127, 
+                                        4, # PartType=4 for stars
+                                        loadlist=attrstoload, 
+                                        snappath=f"{simulation_dir}halo_{halo}/", 
+                                        verbose=False)
+    # Load subfind information                                                  
+    subobj = ap.subhalos.subfind(127, 
+                                directory=f"{simulation_dir}halo_{halo}/", 
+                                loadlist=['SubhaloPos', 'Group_R_Crit200'])
+    # Centre on MW                                                       
+    snapobj = ap.util.CentreOnHalo(snapobj, subobj.data['SubhaloPos'][0])
+    # Remove bulk velocity so that velocities are 0 at centre of galaxy         
+    bulk_velocity = ap.util.remove_bulk_velocity(snapobj, 
+                                                 idx=None, 
+                                                 radialcut=0.1*subobj.data['Group_R_Crit200'][0])
+    # Select only stars within 30kpc  
+    snapobj = ap.util.apply_mask(snapobj, 
+                                stars=True, 
+                                radialcut=subobj.data['Group_R_Crit200'][0])
+    # Rotate galaxy to align z-axis to direction of total angular momentum of galaxy                                                                           
+    ap.util.align_galaxy(snapobj)
 
-simulation_dir = '/mnt/aridata1/users/arirgran/Auriga/level4/Original/'
+    return snapobj
 
-# Load snapshot data                                                        
-snapobj = ap.snapshot.load_snapshot(127, 
-                                    4, # PartType=4 for stars
-                                    loadlist=attrstoload, 
-                                    snappath=f"{simulation_dir}halo_{halo}/", 
-                                    verbose=False)
-# Load subfind information                                                  
-subobj = ap.subhalos.subfind(127, 
-                            directory=f"{simulation_dir}halo_{halo}/", 
-                            loadlist=['SubhaloPos', 'Group_R_Crit200'])
-# Centre on MW                                                       
-snapobj = ap.util.CentreOnHalo(snapobj, subobj.data['SubhaloPos'][0])
-# Remove bulk velocity so that velocities are 0 at centre of galaxy         
-bulk_velocity = ap.util.remove_bulk_velocity(snapobj, 
-                                            idx=None, 
-                                                radialcut=0.1*subobj.data['Group_R_Crit200'][0])
-# Select only stars within 30kpc  
-snapobj = ap.util.apply_mask(snapobj, 
-                            stars=True, 
-                            radialcut=subobj.data['Group_R_Crit200'][0])
-# Rotate galaxy to align z-axis to direction of total angular momentum of galaxy                                                                           
-ap.util.align_galaxy(snapobj)
-
-
-
-#####
-# Calculate chemical abundance ratio with two methods
-# 1. alpha/Fe = (O/Fe + Mg/Fe + Ne/Fe + Si/Fe ) / 4
-# 2. alpha/Fe = log10( (N_O + N_Mg + N_Ne + N_Si)/4 N_Fe ) - same for solar 
-#####
-
-
-# Abundances in the snapshot are read as mass ratios, need to convert them to mass densities multiplying by their atomic mass
-abundances = snapobj.data['GFM_Metals']
-element = {'H':0, 'He':1, 'C':2, 'N':3, 'O':4, 'Ne':5, 'Mg':6, 'Si':7, 'Fe':8}
-elementnum = {'H':1, 'He':4, 'C':12, 'N':14, 'O':16, 'Ne':20, 'Mg':24, 'Si':28, 'Fe':56}
-#from Asplund et al. (2009) Table 5
-SUNABUNDANCES = {'H':12.0, 'He':10.98, 'C':8.47, 'N':7.87, 'O':8.73, 'Ne':7.97, 'Mg':7.64, 'Si':7.55, 'Fe':7.54}
+def get_abundance_ratios(snapobj):
+    #####
+    # Calculate chemical abundance ratio with two methods
+    # 1. alpha/Fe = (O/Fe + Mg/Fe + Ne/Fe + Si/Fe ) / 4
+    # 2. alpha/Fe = log10( (N_O + N_Mg + N_Ne + N_Si)/4 N_Fe ) - same for solar 
+    #####
 
 
-FeH_Sun = SUNABUNDANCES['Fe']-SUNABUNDANCES['H']
-OFe_Sun = SUNABUNDANCES['O'] - SUNABUNDANCES['Fe']
-MgFe_Sun = SUNABUNDANCES['Mg'] - SUNABUNDANCES['Fe']
-NeFe_Sun = SUNABUNDANCES['Ne'] - SUNABUNDANCES['Fe']
-SiFe_Sun = SUNABUNDANCES['Si'] - SUNABUNDANCES['Fe']
+    # Abundances in the snapshot are read as mass ratios, need to convert them to mass densities multiplying by their atomic mass
+    abundances = snapobj.data['GFM_Metals']
+    element = {'H':0, 'He':1, 'C':2, 'N':3, 'O':4, 'Ne':5, 'Mg':6, 'Si':7, 'Fe':8}
+    elementnum = {'H':1, 'He':4, 'C':12, 'N':14, 'O':16, 'Ne':20, 'Mg':24, 'Si':28, 'Fe':56}
+    #from Asplund et al. (2009) Table 5
+    SUNABUNDANCES = {'H':12.0, 'He':10.98, 'C':8.47, 'N':7.87, 'O':8.73, 'Ne':7.97, 'Mg':7.64, 'Si':7.55, 'Fe':7.54}
 
 
-aFe_Sun2 = np.log10(sum([10**(SUNABUNDANCES['O']-SUNABUNDANCES['Fe']),
-                        10**(SUNABUNDANCES['Mg']-SUNABUNDANCES['Fe']),
-                        10**(SUNABUNDANCES['Ne']-SUNABUNDANCES['Fe']),
-                        10**(SUNABUNDANCES['Si']-SUNABUNDANCES['Fe'])])) 
+    FeH_Sun = SUNABUNDANCES['Fe']-SUNABUNDANCES['H']
+    MgFe_Sun = SUNABUNDANCES['Mg'] - SUNABUNDANCES['Fe']
 
-aFe_Sun1 = sum([OFe_Sun+MgFe_Sun+NeFe_Sun+SiFe_Sun])/4
+    m_Fe_sim = np.clip(abundances[:,element['Fe']],a_min=1e-10,a_max=1)
+    m_H_sim = np.clip(abundances[:,element['H']],a_min=1e-10,a_max=1)
+    # Abundances in dex notation are derived from the ratio of number densities of atoms, 
+    # hence the mass ratios of each elements need to be converted into number densities: 
+    #   N*A = m         N is number density, 
+    #                   A is the atomic number of the element, 
+    #                   m is the mass of the element in the star
+    N_Fe = m_Fe_sim / elementnum['Fe']
+    N_H = m_H_sim / elementnum['H']
+    N_Mg = np.clip(abundances[:,element['Mg']]/elementnum['Mg'], a_min=1e-10, a_max=1)
 
+    # Values are then normalized by the solar value
+    FeH = np.log10(N_Fe / N_H) - FeH_Sun
+    MgFe = np.log10(N_Mg / N_Fe) - MgFe_Sun
 
-m_Fe_sim = np.clip(abundances[:,element['Fe']],a_min=1e-10,a_max=1)
-m_H_sim = np.clip(abundances[:,element['H']],a_min=1e-10,a_max=1)
-# Abundances in dex notation are derived from the ratio of number densities of atoms, 
-# hence the mass ratios of each elements need to be converted into number densities: 
-#   N*A = m         N is number density, 
-#                   A is the atomic number of the element, 
-#                   m is the mass of the element in the star
-N_Fe = m_Fe_sim / elementnum['Fe']
-N_H = m_H_sim / elementnum['H']
-N_O = np.clip(abundances[:,element['O']]/elementnum['O'], a_min=1e-10, a_max=1)
-N_Mg = np.clip(abundances[:,element['Mg']]/elementnum['Mg'], a_min=1e-10, a_max=1)
-N_Ne = np.clip(abundances[:,element['Ne']]/elementnum['Ne'], a_min=1e-10, a_max=1)
-N_Si = np.clip(abundances[:,element['Si']]/elementnum['Si'], a_min=1e-10, a_max=1)
+    return FeH, MgFe
 
+def select_disc_stars(snapobj):
 
-# Values are then normalized by the solar value
-FeH = np.log10(N_Fe / N_H) - FeH_Sun
-OFe = np.log10(N_O / N_Fe) - OFe_Sun
-MgFe = np.log10(N_Mg / N_Fe) - MgFe_Sun
-NeFe = np.log10(N_Ne / N_Fe) - NeFe_Sun
-SiFe = np.log10(N_Si / N_Fe) - SiFe_Sun
+    R = np.clip(np.sqrt(np.sum(snapobj.data["Coordinates"][:,1:]**2,axis=1)), a_min=1e-6, a_max=1e6)
+    vtheta = -(snapobj.data["Velocities"][:,1]*snapobj.data["Coordinates"][:,2]-snapobj.data["Velocities"][:,2]*snapobj.data["Coordinates"][:,1]) / R
+    vr = (snapobj.data["Velocities"][:,2]*snapobj.data["Coordinates"][:,2] + snapobj.data["Velocities"][:,1]*snapobj.data["Coordinates"][:,1]) / R
+    
+    v = np.vstack([vr,vtheta,snapobj.data["Velocities"][:,0]]).T
 
-aFe1 = sum([OFe,MgFe,NeFe,SiFe])/4
-aFe2 = np.log10(sum([N_O,N_Mg,N_Ne,N_Si])/(N_Fe)) - aFe_Sun2
+    dummy_v = np.zeros((len(v),3))
+    dummy_v[:,1] = 200
 
+    disc_stars_idx = np.where(np.sum((v-dummy_v)**2,axis=1)<=200**2)[0]
 
-# Plot distribution of the single abundances
+    print(f"N disc stars: {len(disc_stars_idx):,}", flush=True)
+
+    return disc_stars_idx
+
+simulation_dir_original = '/mnt/aridata1/users/arirgran/Auriga/level4/Original/'
+simulation_dir_low_mass = '/mnt/aridata1/users/arirgran/Auriga/level4/LowMassMWs/'
+
+# Collect [Fe/H] and [alpha/Fe] abundance ratios for the disk stars in the MW anlogues in the Auriga suite
+FeH_dict = {}
+MgFe_dict = {}
+
+for halo in range(1,31):
+
+    snapobj = load_snapshot(halo=halo,
+                            simulation_dir=simulation_dir_original)
+    
+    FeH, MgFe = get_abundance_ratios(snapobj=snapobj)
+
+    # Select disc stars
+    disc_idx = select_disc_stars(snapobj=snapobj)
+
+    # Quick and dirty plot to see if the right selection was done
+    if halo==27:
+        R = np.sqrt(np.clip(np.sum(snapobj.data["Coordinates"][:,1:]**2,axis=1),a_min=1e-6,a_max=1e6)) #kpc
+        vtheta = -(snapobj.data["Velocities"][:,1]*snapobj.data["Coordinates"][:,2]-snapobj.data["Velocities"][:,2]*snapobj.data["Coordinates"][:,1]) / R
+        vsigma = np.sqrt(np.sum(snapobj.data["Velocities"]**2,axis=1)-vtheta**2)
+        fig,ax = plt.subplots()
+        ax.hist2d(x=vtheta[disc_idx],
+                  y=vsigma[disc_idx],
+                  bins=300,
+                  range=[[-300,300],[0,400]])
+        fig.savefig("/mnt/aridata1/users/ariasant/MW-sbi/Auriga_disc_selection.pdf")
+
+    FeH_dict[f"Au{halo}"] = FeH[disc_idx]
+    MgFe_dict[f"Au{halo}"] = MgFe[disc_idx]
+
+    print(halo, flush=True)
+
+for halo in range(1,11):
+
+    if halo==4:
+        continue
+
+    snapobj = load_snapshot(halo=halo,
+                            simulation_dir=simulation_dir_low_mass)
+    
+    FeH, MgFe = get_abundance_ratios(snapobj=snapobj)
+
+    # Select disc stars
+    disc_idx = select_disc_stars(snapobj=snapobj)
+
+    FeH_dict[f"L{halo}"] = FeH[disc_idx]
+    MgFe_dict[f"L{halo}"] = MgFe[disc_idx]
+
+    print(halo, flush=True)
+   
+# Save dictionaries
+pickle.dump(FeH_dict, open("/mnt/aridata1/users/ariasant/MW-sbi/Auriga_FeH_dict.pkl","wb"))
+pickle.dump(MgFe_dict, open("/mnt/aridata1/users/ariasant/MW-sbi/Auriga_MgFe_dict.pkl","wb"))
+
+##############################################################################################
+# Load MW stars
+apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
+
+# Select disc stars as done in he simulations
+v = apogee_ds[["vr","vtheta","vz"]].values
+dummy_v = np.zeros((len(v),3))
+dummy_v[:,1] = 200
+
+disc_idx = np.where(np.sum((v-dummy_v)**2,axis=1)<=200**2)[0]
+
+# Plot selection of disc stars
+fig,ax = plt.subplots()
+ax.hist2d(apogee_ds.iloc[disc_idx]["FeH"],
+          apogee_ds.iloc[disc_idx]["MgFe"],
+          bins=200,
+          range=[[-3,1],[-0.2,0.6]])
+fig.savefig("/mnt/aridata1/users/ariasant/MW-sbi/MW_disc_selection.pdf")
+
+"""# Plot distribution of the single abundances
 
 df_list = []
 for alpha,alpha_label in zip([OFe,MgFe,NeFe,SiFe],["[O/Fe]","[Mg/Fe]","[Ne/Fe]","[Si/Fe]"]):
@@ -215,3 +286,4 @@ fig.savefig("/mnt/aridata1/users/ariasant/MW-sbi/N_comparison.png", dpi=400)
 
 
 
+"""
