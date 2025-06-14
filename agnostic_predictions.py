@@ -1,3 +1,4 @@
+import argparse
 import corner
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -40,8 +41,16 @@ def plot_ax(x,y,
 
 
 
-model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
+CLI = argparse.ArgumentParser()
+CLI.add_argument(
+        "--model_dir",
+        type=str,
+        default="/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
+    )
+
+args = CLI.parse_args()
+model_dir = args.model_dir
+output_dir = args.model_dir
 
 features=["E","L","FeH","MgFe"]
 

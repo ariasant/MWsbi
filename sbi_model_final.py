@@ -56,13 +56,24 @@ CLI.add_argument(
         type=str,
         default=['E', 'L', 'FeH', 'MgFe']
     )
+CLI.add_argument(
+        "--FeH_shift",
+        type=float,
+        default=0.2
+    )
+CLI.add_argument(
+        "--output_dir",
+        type=str,
+        default='/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/'
+    )
 
 args = CLI.parse_args()
 features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/'
+output_dir = args.output_dir
+
+print(f"output_dir: {output_dir}", flush=True)
 
 filename = f"Suite_"+"".join(features)
 
@@ -87,7 +98,7 @@ for file in os.listdir(data_dir):
     df = df[(df["E"]<0) & (df["L"]>0)]
 
     # Shift chemical abundances
-    df["FeH"] = df["FeH"]-0.4
+    df["FeH"] = df["FeH"]-args.FeH_shift
     df["MgFe"] = df["MgFe"]+0.4
 
     sim_data.append(df)

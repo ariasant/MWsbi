@@ -1,3 +1,4 @@
+import argparse
 import corner
 import math
 import numpy as np
@@ -5,8 +6,17 @@ import pandas as pd
 import pickle
 import torch
 
-model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
+CLI = argparse.ArgumentParser()
+CLI.add_argument(
+        "--model_dir",
+        type=str,
+        default="/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
+    )
+
+
+args = CLI.parse_args()
+model_dir = args.model_dir
+output_dir = args.model_dir
 
 features=["E","L","FeH","MgFe"]
 
@@ -38,7 +48,7 @@ for substructure in substructures:
     if substructure=="GES":
         df_sub = df[df[substructure+"_flag"]==1]
         # Improve purity of GES sample
-        df_sub = df_sub[df_sub["FeH"]<-0.6]
+        #df_sub = df_sub[df_sub["FeH"]<-0.6]
         print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
     elif substructure=="Sagittarius":

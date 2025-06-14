@@ -1,11 +1,20 @@
+import argparse
 import corner
 import numpy as np
 import pandas as pd
 import pickle
 import torch
 
-model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
+CLI = argparse.ArgumentParser()
+CLI.add_argument(
+        "--model_dir",
+        type=str,
+        default="/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
+    )
+
+args = CLI.parse_args()
+model_dir = args.model_dir
+output_dir = args.model_dir
 
 features=["E","L","FeH","MgFe"]
 
