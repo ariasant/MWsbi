@@ -118,7 +118,7 @@ class MultiTask(nn.Module):
         self.eta_3 = nn.Parameter(torch.tensor(1.0, device=device)) #MMD
 
         # Add list for storing distances and eta values
-        self.max_distances, self.js_distances = [], []
+        self.max_distances, self.js_distances, self.mmd_distances = [], [], []
         self.blur_vals, self.eta_1_vals, self.eta_2_vals = [], [], []
 
         
@@ -132,13 +132,36 @@ class MultiTask(nn.Module):
     
     def sample(self, 
                conditions: torch.Tensor, 
-               n_samples: int):
+               n_samples: int,
+               prior_ranges: list = None):
 
         # Get encoded representation of the conditions
         x = self.encoder(conditions)
 
-        # Sample from the amortised posterior
-        samples = self.flow(x).sample((n_samples,))
+        if prior_ranges is not None:
+            
+            samples = torch.Tensor([]).to(device)
+            n_rounds = 0 # limit the amount of time the posterior is sampled
+            while (len(samples)<n_samples): 
+
+                # Sample from the amortised posterior
+                proposed_samples = self.flow(x).sample((n_samples,))[:,0,:]
+                # Accept posterior samples which are within prior support
+                is_within_prior = [(proposed_samples[:,i]>prior_ranges[i][0]) &  
+                                   (proposed_samples[:,i]<prior_ranges[i][1]) for i in range(len(prior_ranges))]
+                is_valid_sample = torch.all(torch.stack(is_within_prior), dim=0)
+
+                samples = torch.cat((samples, proposed_samples[is_valid_sample]))
+                n_rounds +=1
+
+            if n_rounds==100:
+                raise RuntimeError("Cannot draw valid samples from posterior.")
+
+            samples = samples[:n_samples]
+
+        else:
+            samples = self.flow(x).sample((n_samples,))[:,0,:]
+
 
         return samples
     
@@ -163,30 +186,27 @@ class MultiTask(nn.Module):
         if warmup:
             return log_p.item(), 0.0, log_p.item()
 
-        # Calculate DA loss value
-        # Ensures there are the same number of examples from the source and target domain
-        n_samples = min(source_features.shape[0], target_features.shape[0])
-    
-        pairwise_distances = torch.cdist(source_features[:n_samples], target_features[:n_samples], p=2)
+        # Calculate DA loss value    
+        pairwise_distances = torch.cdist(source_features, target_features, p=2)
         flattened_distances = pairwise_distances.view(-1)
         max_distance = torch.max(flattened_distances)
 
         dynamic_blur_val = 0.05 * max_distance.detach().cpu().numpy()
 
         DA_loss = sinkhorn_loss(
-            source_features[:n_samples],
-            target_features[:n_samples],
+            source_features,
+            target_features,
             blur=max(dynamic_blur_val, 0.01),  # Apply lower bound to blur
         )
 
-        MMD_loss = mmd_loss(source_features[:n_samples], 
-                            target_features[:n_samples], sigma=1.0)
+        MMD_loss = mmd_loss(source_features, 
+                            target_features, sigma=1.0)
 
         loss = (
             (1 / (2 * self.eta_1**2)) * log_p
-            + (1 / (2 * self.eta_2**2)) * DA_loss
+            #+ (1 / (2 * self.eta_2**2)) * DA_loss
             + MMD_loss / (2 * self.eta_3**2)
-            + torch.log(torch.abs(self.eta_1) * torch.abs(self.eta_2)) * torch.abs(self.eta_3)
+            + torch.log(torch.abs(self.eta_1) * torch.abs(self.eta_3))
         )
 
         if validate:
@@ -195,10 +215,11 @@ class MultiTask(nn.Module):
         # Store distances and eta values
         self.max_distances.append(max_distance.item())
         self.js_distances.append(
-            jensen_shannon_distance(source_features[:n_samples], target_features[:n_samples])
+            jensen_shannon_distance(source_features, target_features)
             .nanmean()
             .item()
         )
+        self.mmd_distances.append(MMD_loss.item())
         self.blur_vals.append(dynamic_blur_val)
         self.eta_1_vals.append(self.eta_1.item())
         self.eta_2_vals.append(self.eta_2.item())
@@ -214,11 +235,12 @@ class MultiTask(nn.Module):
     
     
     def train_model(self, 
-                train_dataloader: torch.utils.data.DataLoader,
-                val_dataloader: torch.utils.data.DataLoader,
-                optimizer: torch.optim.Optimizer,
-                epochs: int,
-                n_warmup_epochs: int = 5
+                    train_dataloader: torch.utils.data.DataLoader,
+                    val_dataloader: torch.utils.data.DataLoader,
+                    optimizer: torch.optim.Optimizer,
+                    epochs: int,
+                    n_warmup_epochs: int = 5,
+                    weights_path: str = None
                 ):
         
         #optimizer.add_param_group({"params": [self.eta_1, self.eta_2]})
@@ -243,6 +265,12 @@ class MultiTask(nn.Module):
             start_time = time.time()
             
             for (train_data,train_conditions), (val_data,val_conditions) in zip(train_dataloader, train_dataloader):
+                
+                # Compress data dim=1: (BATCH_SIZE,2,X_dim) --> (2*BATCH_SIZE, X_dim)
+                train_data = train_data.flatten(start_dim=0, end_dim=1)
+                train_conditions = train_conditions.flatten(start_dim=0, end_dim=1)
+                val_data = val_data.flatten(start_dim=0, end_dim=1)
+                val_conditions = val_conditions.flatten(start_dim=0, end_dim=1)
 
                 # Set model to training mode
                 self.train()
@@ -272,8 +300,12 @@ class MultiTask(nn.Module):
                 val_DA_loss_epoch += val_DA_loss
                 val_log_p_epoch += val_log_p
 
-
                 ################################################################
+
+            if weights_path is not None:
+                # Save model weights
+                model_path = f"{weights_path}model_{epoch}.pt"
+                torch.save(self.state_dict(), model_path)
                 
 
             # Calculate average losses for the epoch
@@ -313,7 +345,8 @@ class MultiTask(nn.Module):
             "val_flow_loss": val_flow_losses,
             "val_DA_loss": val_DA_losses,
             "max_distances": self.max_distances,
-            "js_distances": self.js_distances
+            "js_distances": self.js_distances,
+            "MMD_distances": self.mmd_distances
         }
 
         return training_results
@@ -362,19 +395,22 @@ def plot_distances(training_results):
     # Unpack the training results
     max_distances = training_results["max_distances"]
     js_distances = training_results["js_distances"]
+    mmd_distances = training_results["MMD_distances"]
     
     # Plot the distances and eta values
-    fig, ax = plt.subplots(2, 1, figsize=(10, 15))
+    fig, ax = plt.subplots(3, 1, figsize=(10, 18))
 
-    ax[0].plot(max_distances, label='Max Distance')
+    ax[0].plot(max_distances)
     ax[0].set_xlabel('Steps')
     ax[0].set_ylabel('Max Distance')
-    ax[0].legend(loc='upper right')
 
-    ax[1].plot(js_distances, label='Jensen-Shannon Distance')
+    ax[1].plot(js_distances)
     ax[1].set_xlabel('Steps')
     ax[1].set_ylabel('Jensen-Shannon Distance')
-    ax[1].legend(loc='upper right')
+
+    ax[2].plot(mmd_distances)
+    ax[2].set_xlabel('Steps')
+    ax[2].set_ylabel('MMD')
 
     return fig
                 
