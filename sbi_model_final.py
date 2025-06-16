@@ -1,5 +1,6 @@
 import argparse
 import corner
+import math
 import matplotlib as mpl
 import numpy as np
 import os
@@ -12,6 +13,7 @@ import torch
 import sys
 sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
 import multitask_model as mt
+import sbi_results
 
 
 
@@ -80,14 +82,15 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Data preparation
 ###########################################################################################
 
-X_train = np.ones((1000,400))
-X_test = np.ones((100,400))
-Y_train = np.ones((1000,4))
-Y_test = np.ones((100,4))
+#X_train = np.random.randint(0,10,size=(1000,400))
+#X_test = np.random.randint(0,10,size=(100,400))
+#Y_train = np.ones((1000,4))
+#Y_train[:500,:] = np.nan
+#Y_test = np.ones((100,4))
 
 
-"""# Load simulation (source) data
-data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
+# Load simulation (source) data
+data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
 sim_data = []
 
 for file in os.listdir(data_dir):
@@ -125,8 +128,12 @@ fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='ti
 
 # Scale data
 scaler = RobustScaler()
-sim_data[features] = scaler.fit_transform(sim_data[features].values)
+scaler.fit(np.vstack([sim_data[features].values, obs_data[features].values]))
+sim_data[features] = scaler.transform(sim_data[features].values)
 obs_data[features] = scaler.transform(obs_data[features].values)
+
+# Save scaler
+pickle.dump(scaler, open(f"{output_dir}/data_scaler_{filename}.pkl", "wb"))
 
 
 # Plot merger parameters
@@ -141,16 +148,10 @@ fig = corner.corner(sim_data[parameters].values,
 fig.savefig(f"{output_dir}merger_parameters_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 
-# Initialize the scaler for the merger parameters
-scaler_params = RobustScaler()
-# Scale the merger parameters
-sim_data[parameters] = scaler_params.fit_transform(sim_data[parameters].values)
-
 print(f"N progID: {len(sim_data['progID'].unique())}", flush=True)
 
 # Create datasets for training 
 X_train, Y_train = [], []
-n = 100 # number of samples per progenitor
 
 for progID in sim_data["progID"].unique():
     # Get the data for the current progenitor
@@ -163,6 +164,7 @@ for progID in sim_data["progID"].unique():
     prog_parameters = prog_data[parameters].values
 
     # Sample the data n times
+    n = min(10, math.ceil(len(prog_data)/100)) # number of samples per progenitor
     idx_samples = np.random.randint(0, len(prog_data), size=(n, 100))
     X_train.extend(prog_features[idx_samples].reshape(n, -1))
     Y_train.extend(prog_parameters[idx_samples[:, 0]])
@@ -181,14 +183,11 @@ Y_train = np.stack(Y_train)
 
 # Split the data into training and test(validation) sets
 X_train, X_test, Y_train, Y_test = train_test_split(X_train, Y_train, test_size=0.1)
-test_dictionary = {"X": X_test,
-                   "Y": Y_test,
-                   "ID": [f"{i:05}" for i in range(len(Y_test))]}
 
 print(f"X_train shape: {X_train.shape}", flush=True)
 print(f"Y_train shape: {Y_train.shape}", flush=True)
 print(f"X_test shape: {X_test.shape}", flush=True)
-print(f"Y_test shape: {Y_test.shape}", flush=True)"""
+print(f"Y_test shape: {Y_test.shape}", flush=True)
     
 
 # Create dataloaders for training
@@ -207,10 +206,8 @@ test_loader = torch.utils.data.DataLoader(test_dataset,
                                           pin_memory=False)
 
 
-# Save scaler for future analysis
-#pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
 # Save processed Milky Way data
-#pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
+pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
 ####################################################################################
 ####################################################################################
@@ -219,30 +216,34 @@ test_loader = torch.utils.data.DataLoader(test_dataset,
 ####################################################################################
 
 # Initialize the model
-model = mt.MultiTask(input_dim=X_train.shape[1], 
-                  n_conditions=Y_train.shape[1], # Dimension of the probability distribution approximated by the flow
-                  n_layers_enc = 2,
-                  latent_dim_enc = 100,
-                  n_transforms = 5,
-                  n_layers_per_transform = 2,
-                  n_neurons_flow = 50)
+model = mt.MultiTask(theta_dim=Y_train.shape[1], # Dimensions of the probability distribution approximated by the flow
+                     n_conditions=X_train.shape[1], 
+                     n_layers_enc = 2,
+                     latent_dim_enc = 50,
+                     n_transforms = 5,
+                     n_layers_per_transform = 2,
+                     n_neurons_flow = 50)
 
 # Move model to training device
 model = model.to(device)
 
 # Initialize the optimizer
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(model.parameters(), 
+                             lr=1e-4, 
+                             weight_decay=1e-5)
 
 # Train the model
 training_results = model.train_model(train_dataloader=train_loader,
                                      val_dataloader=test_loader,
                                      optimizer=optimizer,
-                                     epochs=100,
-                                     warmup=10)
+                                     epochs=400,
+                                     n_warmup_epochs=20)
 
 # Plot the training losses
-mt.plot_training_losses(training_results)
-mt.plot_distances(training_results)
+fig = mt.plot_training_losses(training_results)
+fig.savefig(f"{output_dir}training.pdf")
+fig = mt.plot_distances(training_results)
+fig.savefig(f"{output_dir}training_distances.pdf")
 
 # Save the model
 model_path = f"{output_dir}model_{filename}.pt"
@@ -258,24 +259,36 @@ pickle.dump(training_results, open(f"{output_dir}training_results_{filename}.pkl
 ####################################################################################
 ####################################################################################
 
+# Set the model for evaluation
+model.eval()
 
-"""# Sample parameters for test galaxy
-samples = training.validation(posterior_ensemble=posterior_model,
-                              test_dictionary=test_dictionary,
-                              filename=filename,
-                              output_dir=output_dir)
+# Sample parameters for test galaxy
+n_samples = 1000
+prior_ranges = [[0,14],[6,11],[7,12],[-3,0]]
+
+samples_dict = {}
+
+for i,(X,fiducial) in enumerate(test_dataset):
+
+    fiducial = fiducial.cpu().numpy()
+    # Discard samples from the MW
+    if np.isnan(fiducial).any():
+        continue
+    samples = model.sample(X[None,:], n_samples=n_samples)[:,0,:].cpu().numpy()
+
+    # Accept posterior samples which are within prior support
+    is_valid_sample = np.logical_and.reduce([(samples[:,i]>prior_ranges[i][0]) &  
+                                             (samples[:,i]<prior_ranges[i][1]) for i in range(Y_test.shape[1])])
+    if sum(is_valid_sample)<0.5*n_samples:
+        print("Acceptance rate is lower than 50%", flush=True)
     
-# Scale back the merger parameters into the original representation
-for progID in samples.keys():
-    theta_pred, log_p, theta_fid = samples[progID]
-    samples[progID] = (scaler_params.inverse_transform(theta_pred),
-                        log_p,
-                        scaler_params.inverse_transform(theta_fid[None,:])[0])
+    samples_dict[f"test{i}"] = (samples[is_valid_sample], 0, fiducial)
 
-
-pickle.dump(samples, 
+# Save samples 
+pickle.dump(samples_dict, 
             open(f'{output_dir}{filename}_test_samples.pkl', 'wb'))
-    
+
+samples_dict = pickle.load(open('/mnt/aridata1/users/ariasant/MW-sbi/multitask_results/Suite_ELFeHMgFe_test_samples.pkl', 'rb'))
 
 filename = "Suite_"+"".join(features)+"".join(parameters)
 # Make plot of cross-validated parameters inference
@@ -283,23 +296,15 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'log($M_{*}/M_{\odot}$)',
              'log($M/M_{\odot}$)', 
              'MMR (log)']
-plot_ranges=[[0.1,13.9],[5.9,10.9],[7.1,11.9],[-3.2,-0.1]]
+plot_ranges=[[0.1,13.9],[5.9,10.9],[8.1,11.9],[-3.2,-0.1]]
 
-get_results.cross_validation_plot(samples=[samples],
-                                  percentile_range=[16,84],
-                                  plot_labels=plot_labels,
-                                  plot_ranges=plot_ranges,
-                                  filename=f'{output_dir}cross_validation_1684_{filename}.png')
+fig = sbi_results.cross_validation_plot(samples_dict=samples_dict,
+                                        percentile_range=[16,84],
+                                        plot_labels=plot_labels,
+                                        plot_ranges=plot_ranges)
+fig.savefig(f"{output_dir}cross_validation_1684_{filename}.pdf", dpi=400)
 
-# Save table with quantitative results 
-get_results.rms_table_per_galaxy(samples={"SUITE":samples},
+
+sbi_results.rms_table_per_galaxy(samples_dict=samples_dict,
                                  parameters=parameters,
                                  filename=f'{output_dir}rms_table_{filename}.csv')
-
-get_results.count_predictions_within_range(samples={"SUITE":samples},
-                                           parameters=parameters,
-                                           percentile_range=[16,84],
-                                           filename=f'{output_dir}range_table_{filename}_3468.csv')"""
-
-
-

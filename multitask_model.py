@@ -9,11 +9,27 @@ import time
 # Define device where the model will be trained
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+def mmd_loss(x, y, sigma=1.0):
+    xx = torch.mm(x, x.t())
+    yy = torch.mm(y, y.t())
+    xy = torch.mm(x, y.t())
+
+    X_sq = xx.diag().unsqueeze(1) + xx.diag().unsqueeze(0) - 2 * xx
+    Y_sq = yy.diag().unsqueeze(1) + yy.diag().unsqueeze(0) - 2 * yy
+    XY_sq = x.pow(2).sum(dim=1).unsqueeze(1) + y.pow(2).sum(dim=1).unsqueeze(0) - 2 * xy
+
+    X_exp = torch.exp(-X_sq / (2 * sigma**2))
+    Y_exp = torch.exp(-Y_sq / (2 * sigma**2))
+    XY_exp = torch.exp(-XY_sq / (2 * sigma**2))
+
+    loss = (X_exp.mean() + Y_exp.mean() - 2 * XY_exp.mean()) * 0.5
+    return loss
+
 # Define encoder component
 class Encoder(nn.Module):
 
     def __init__(self, 
-                 input_dim=4, 
+                 input_dim: int, 
                  latent_dim=50,
                  n_layers=2,
                  dropout=0.5):
@@ -38,7 +54,7 @@ class Encoder(nn.Module):
             layers.append(nn.Dropout(p=dropout))
 
             # Add ReLU activation function
-            layers.append(nn.ReLU())
+            layers.append(nn.SiLU())
 
         self.encoder = nn.Sequential(*layers)
         
@@ -76,8 +92,8 @@ def sinkhorn_loss(
 class MultiTask(nn.Module):
 
     def __init__(self,
-                 input_dim: int, 
-                 n_conditions: int, # Dimension of the probability distribution approximated by the flow
+                 theta_dim: int, # Dimension of the probability distribution approximated by the flow
+                 n_conditions: int, 
                  n_layers_enc = 2,
                  latent_dim_enc = 100,
                  n_transforms = 5,
@@ -87,14 +103,19 @@ class MultiTask(nn.Module):
         super(MultiTask, self).__init__()
 
         # Define model components
-        self.encoder = Encoder(input_dim=input_dim,
+        self.encoder = Encoder(input_dim=n_conditions,
                                n_layers=n_layers_enc,
                                latent_dim=latent_dim_enc)
         
-        self.flow = zuko.flows.MAF(features=latent_dim_enc,
-                                   context=n_conditions,
+        self.flow = zuko.flows.MAF(features=theta_dim,
+                                   context=latent_dim_enc,
                                    transforms=n_transforms,
                                    hidden_features=[n_neurons_flow for i in range(n_layers_per_transform)])
+        
+        # Add loss function tunable weights
+        self.eta_1 = nn.Parameter(torch.tensor(1.0, device=device))
+        self.eta_2 = nn.Parameter(torch.tensor(1.0, device=device))
+        self.eta_3 = nn.Parameter(torch.tensor(1.0, device=device)) #MMD
 
         # Add list for storing distances and eta values
         self.max_distances, self.js_distances = [], []
@@ -108,6 +129,18 @@ class MultiTask(nn.Module):
         x = self.encoder(x)
 
         return x
+    
+    def sample(self, 
+               conditions: torch.Tensor, 
+               n_samples: int):
+
+        # Get encoded representation of the conditions
+        x = self.encoder(conditions)
+
+        # Sample from the amortised posterior
+        samples = self.flow(x).sample((n_samples,))
+
+        return samples
     
     def train_step(self, 
                    data, 
@@ -125,28 +158,35 @@ class MultiTask(nn.Module):
         source_features = encoded_data[idx_source]
         target_features = encoded_data[idx_target]
 
-        log_p = -self.flow(conditions[idx_source]).log_prob(source_features).mean()
+        log_p = -self.flow(source_features).log_prob(conditions[idx_source]).mean()
 
         if warmup:
             return log_p.item(), 0.0, log_p.item()
 
         # Calculate DA loss value
-        pairwise_distances = torch.cdist(source_features, target_features, p=2)
+        # Ensures there are the same number of examples from the source and target domain
+        n_samples = min(source_features.shape[0], target_features.shape[0])
+    
+        pairwise_distances = torch.cdist(source_features[:n_samples], target_features[:n_samples], p=2)
         flattened_distances = pairwise_distances.view(-1)
         max_distance = torch.max(flattened_distances)
 
         dynamic_blur_val = 0.05 * max_distance.detach().cpu().numpy()
 
         DA_loss = sinkhorn_loss(
-            source_features,
-            target_features,
+            source_features[:n_samples],
+            target_features[:n_samples],
             blur=max(dynamic_blur_val, 0.01),  # Apply lower bound to blur
         )
+
+        MMD_loss = mmd_loss(source_features[:n_samples], 
+                            target_features[:n_samples], sigma=1.0)
 
         loss = (
             (1 / (2 * self.eta_1**2)) * log_p
             + (1 / (2 * self.eta_2**2)) * DA_loss
-            + torch.log(torch.abs(self.eta_1) * torch.abs(self.eta_2))
+            + MMD_loss / (2 * self.eta_3**2)
+            + torch.log(torch.abs(self.eta_1) * torch.abs(self.eta_2)) * torch.abs(self.eta_3)
         )
 
         if validate:
@@ -155,7 +195,7 @@ class MultiTask(nn.Module):
         # Store distances and eta values
         self.max_distances.append(max_distance.item())
         self.js_distances.append(
-            jensen_shannon_distance(source_features, target_features)
+            jensen_shannon_distance(source_features[:n_samples], target_features[:n_samples])
             .nanmean()
             .item()
         )
@@ -167,7 +207,8 @@ class MultiTask(nn.Module):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
         self.eta_1.data.clamp_(min=1e-3)
-        self.eta_2.data.clamp_(min=0.25 * self.eta_1.data.item())        
+        self.eta_2.data.clamp_(min=0.25 * self.eta_1.data.item())
+        self.eta_3.data.clamp_(min=0.25 * self.eta_1.data.item())        
 
         return loss.item(), DA_loss.item(), log_p.item()
     
@@ -177,15 +218,10 @@ class MultiTask(nn.Module):
                 val_dataloader: torch.utils.data.DataLoader,
                 optimizer: torch.optim.Optimizer,
                 epochs: int,
-                warmup: int = 5
+                n_warmup_epochs: int = 5
                 ):
-
-
-        # Add loss function tunable weights
-        self.eta_1 = nn.Parameter(torch.tensor(1.0, device=device))
-        self.eta_2 = nn.Parameter(torch.tensor(1.0, device=device))
         
-        optimizer.add_param_group({"params": [self.eta_1, self.eta_2]})
+        #optimizer.add_param_group({"params": [self.eta_1, self.eta_2]})
 
         # Initialize loss function list
         train_losses, train_flow_losses, train_DA_losses = [], [], []
@@ -194,7 +230,7 @@ class MultiTask(nn.Module):
 
         for epoch in range(epochs):
 
-            warmup = True if epoch < warmup else False
+            warmup = True if epoch < n_warmup_epochs else False
 
             train_loss = 0.0
             DA_loss_epoch = 0.0
@@ -276,12 +312,16 @@ class MultiTask(nn.Module):
             "val_loss": val_losses,
             "val_flow_loss": val_flow_losses,
             "val_DA_loss": val_DA_losses,
+            "max_distances": self.max_distances,
+            "js_distances": self.js_distances
         }
 
         return training_results
     
 
 def plot_training_losses(training_results):
+
+    import numpy as np
 
     # Unpack the training results
     epochs_loss = training_results["train_loss"]
@@ -296,12 +336,12 @@ def plot_training_losses(training_results):
     fig,ax = plt.subplots(1,1,figsize=(10,5))
 
     #  Normalize the losses
-    epochs_loss = [loss / max(epochs_loss) for loss in epochs_loss]
-    epochs_flow_loss = [loss / max(epochs_flow_loss) for loss in epochs_flow_loss]
-    epochs_DA_loss = [loss / max(epochs_DA_loss) for loss in epochs_DA_loss]
-    epochs_val_loss = [loss / max(epochs_val_loss) for loss in epochs_val_loss]
-    epochs_val_flow_loss = [loss / max(epochs_val_flow_loss) for loss in epochs_val_flow_loss]
-    epochs_val_DA_loss = [loss / max(epochs_val_DA_loss) for loss in epochs_val_DA_loss]
+    epochs_loss = [loss / np.median(epochs_loss) for loss in epochs_loss]
+    epochs_flow_loss = [loss / np.median(epochs_flow_loss) for loss in epochs_flow_loss]
+    epochs_DA_loss = [loss / np.median(epochs_DA_loss) for loss in epochs_DA_loss]
+    epochs_val_loss = [loss / np.median(epochs_val_loss) for loss in epochs_val_loss]
+    epochs_val_flow_loss = [loss / np.median(epochs_val_flow_loss) for loss in epochs_val_flow_loss]
+    epochs_val_DA_loss = [loss / np.median(epochs_val_DA_loss) for loss in epochs_val_DA_loss]
 
     ax.plot(epochs, epochs_loss, label='Total Loss', ls=':', color='k')
     ax.plot(epochs, epochs_DA_loss, label='Classifier Loss', ls=':', color='r')
@@ -312,6 +352,8 @@ def plot_training_losses(training_results):
     ax.set_xlabel('Epochs')
     ax.set_ylabel('Normalised Loss values')
     ax.legend(loc='upper right')
+
+    ax.set_ylim([-1,10])
     
     return fig
 
