@@ -115,10 +115,9 @@ class MultiTask(nn.Module):
         # Add loss function tunable weights
         self.eta_1 = nn.Parameter(torch.tensor(1.0, device=device))
         self.eta_2 = nn.Parameter(torch.tensor(1.0, device=device))
-        self.eta_3 = nn.Parameter(torch.tensor(1.0, device=device)) #MMD
 
         # Add list for storing distances and eta values
-        self.max_distances, self.js_distances, self.mmd_distances = [], [], []
+        self.max_distances, self.js_distances = [], []
         self.blur_vals, self.eta_1_vals, self.eta_2_vals = [], [], []
 
         
@@ -184,6 +183,12 @@ class MultiTask(nn.Module):
         log_p = -self.flow(source_features).log_prob(conditions[idx_source]).mean()
 
         if warmup:
+
+            loss = log_p
+            
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
+
             return log_p.item(), 0.0, log_p.item()
 
         # Calculate DA loss value    
@@ -199,14 +204,11 @@ class MultiTask(nn.Module):
             blur=max(dynamic_blur_val, 0.01),  # Apply lower bound to blur
         )
 
-        MMD_loss = mmd_loss(source_features, 
-                            target_features, sigma=1.0)
 
         loss = (
             (1 / (2 * self.eta_1**2)) * log_p
-            #+ (1 / (2 * self.eta_2**2)) * DA_loss
-            + MMD_loss / (2 * self.eta_3**2)
-            + torch.log(torch.abs(self.eta_1) * torch.abs(self.eta_3))
+            + (1 / (2 * self.eta_2**2)) * DA_loss
+            + torch.log(torch.abs(self.eta_1) * torch.abs(self.eta_2))
         )
 
         if validate:
@@ -219,7 +221,7 @@ class MultiTask(nn.Module):
             .nanmean()
             .item()
         )
-        self.mmd_distances.append(MMD_loss.item())
+
         self.blur_vals.append(dynamic_blur_val)
         self.eta_1_vals.append(self.eta_1.item())
         self.eta_2_vals.append(self.eta_2.item())
@@ -228,8 +230,7 @@ class MultiTask(nn.Module):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=10.0)
         self.eta_1.data.clamp_(min=1e-3)
-        self.eta_2.data.clamp_(min=0.25 * self.eta_1.data.item())
-        self.eta_3.data.clamp_(min=0.25 * self.eta_1.data.item())        
+        self.eta_2.data.clamp_(min=0.25 * self.eta_1.data.item())   
 
         return loss.item(), DA_loss.item(), log_p.item()
     
@@ -346,7 +347,6 @@ class MultiTask(nn.Module):
             "val_DA_loss": val_DA_losses,
             "max_distances": self.max_distances,
             "js_distances": self.js_distances,
-            "MMD_distances": self.mmd_distances
         }
 
         return training_results
@@ -395,8 +395,7 @@ def plot_distances(training_results):
     # Unpack the training results
     max_distances = training_results["max_distances"]
     js_distances = training_results["js_distances"]
-    mmd_distances = training_results["MMD_distances"]
-    
+
     # Plot the distances and eta values
     fig, ax = plt.subplots(3, 1, figsize=(10, 18))
 
@@ -407,10 +406,6 @@ def plot_distances(training_results):
     ax[1].plot(js_distances)
     ax[1].set_xlabel('Steps')
     ax[1].set_ylabel('Jensen-Shannon Distance')
-
-    ax[2].plot(mmd_distances)
-    ax[2].set_xlabel('Steps')
-    ax[2].set_ylabel('MMD')
 
     return fig
                 

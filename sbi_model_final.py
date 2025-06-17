@@ -93,7 +93,7 @@ substructures = ['GES', 'Sagittarius', 'Helmi',
        'LMS', 'Heracles']
 
 
-BATCH_SIZE = 256
+BATCH_SIZE = 64
 
 # Define device where the model will be trained
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -103,15 +103,15 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 ###########################################################################################
 
 
-"""f = np.load("/mnt/aridata1/users/ariasant/MW-sbi/multitask_results/train_data.npz")
+f = np.load("/mnt/aridata1/users/ariasant/MW-sbi/multitask_results/train_data.npz")
 sim_X_train, sim_Y_train, obs_X_train, obs_Y_train = f["sim_X"], f["sim_Y"], f["obs_X"], f["obs_Y"]
 
 f = np.load("/mnt/aridata1/users/ariasant/MW-sbi/multitask_results/val_data.npz")
-sim_X_val, sim_Y_val, obs_X_val, obs_Y_val = f["sim_X"], f["sim_Y"], f["obs_X"], f["obs_Y"]"""
+sim_X_val, sim_Y_val, obs_X_val, obs_Y_val = f["sim_X"], f["sim_Y"], f["obs_X"], f["obs_Y"]
 
 
 
-# Load simulation (source) data
+"""# Load simulation (source) data
 data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
 sim_data = []
 
@@ -209,7 +209,7 @@ print(f"Sim test examples: {sim_X_val.shape[0]}", flush=True)
 print(f"Obs test examples: {obs_X_val.shape[0]}", flush=True)
 
 np.savez(f"{output_dir}train_data", sim_X=sim_X_train, sim_Y=sim_Y_train, obs_X=obs_X_train, obs_Y=obs_Y_train)
-np.savez(f"{output_dir}val_data", sim_X=sim_X_val, sim_Y=sim_Y_val, obs_X=obs_X_val, obs_Y=obs_Y_val)
+np.savez(f"{output_dir}val_data", sim_X=sim_X_val, sim_Y=sim_Y_val, obs_X=obs_X_val, obs_Y=obs_Y_val)"""
 
 
 # Create dataloaders for training
@@ -239,7 +239,7 @@ test_loader = torch.utils.data.DataLoader(test_dataset,
                                          pin_memory=False)
 
 # Save processed Milky Way data
-pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
+#pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
 ####################################################################################
 ####################################################################################
@@ -268,7 +268,7 @@ optimizer = torch.optim.AdamW(model.parameters(),
 training_results = model.train_model(train_dataloader=train_loader,
                                      val_dataloader=test_loader,
                                      optimizer=optimizer,
-                                     epochs=400,
+                                     epochs=1000,
                                      n_warmup_epochs=20,
                                      weights_path=f"{output_dir}model_weights/"
                                      )
