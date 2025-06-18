@@ -2,7 +2,7 @@ import corner
 import matplotlib as mpl
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import PowerTransformer
+from sklearn.preprocessing import PowerTransformer, RobustScaler
 import time
 
 def plot_stars_data(dfs: list, features: list):
@@ -86,7 +86,7 @@ class DataProcessor:
         obs_data = obs_data[obs_accreted]
 
         fig = plot_stars_data([sim_data, obs_data], features=features)
-        fig.savefig(f"/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observation_shifted/DataProcessor_before.pdf", 
+        fig.savefig(f"/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/DataProcessor_before.pdf", 
                     dpi=300, bbox_inches='tight')
 
         # 3 Transform data        
@@ -94,18 +94,40 @@ class DataProcessor:
         obs_data = self.prepare_data_for_Box_Cox(obs_data)
 
         # Apply Box-Cox transformation
-        self.pt_sim = PowerTransformer(method="box-cox", standardize=True)
+        self.pt_sim = PowerTransformer(method="box-cox", standardize=False)
         sim_data[features] = self.pt_sim.fit_transform(sim_data[features].values)
 
-        self.pt_obs = PowerTransformer(method="box-cox", standardize=True)
+        self.pt_obs = PowerTransformer(method="box-cox", standardize=False)
         obs_data[features] = self.pt_obs.fit_transform(obs_data[features].values)
+
+        # Transform MW data to match simulations
+        def transform_gaussian(A,B):
+                mu_A = np.mean(A)
+                mu_B = np.mean(B)
+                std_A = np.std(A)
+                std_B = np.std(B)
+                return B * (std_A/std_B) + (mu_A-mu_B*(std_A/std_B))
+    
+        for col in sim_data.features:
+    
+                obs_data[col] = transform_gaussian(A=sim_data[col].values,
+                                                   B=obs_data[col].values
+                                          )
+                
+        fig.savefig(f"/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/DataProcessor_after.pdf", 
+                    dpi=300, bbox_inches='tight')
+        
+        # Scale data
+        scaler = RobustScaler()
+        sim_data[features] = scaler.fit_transform(sim_data[features].values)
+        obs_data[features] = scaler.transform(obs_data[features].values)
 
         # Remove outliers
         sim_data = sim_data[np.logical_and.reduce([sim_data[feature]**2 < 5**2 for feature in features])]
         obs_data = obs_data[np.logical_and.reduce([obs_data[feature]**2 < 5**2 for feature in features])]
 
         fig = plot_stars_data([sim_data, obs_data], features=features)
-        fig.savefig(f"/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observation_shifted/DataProcessor_after.pdf", 
+        fig.savefig(f"/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/DataProcessor_after_outliers.pdf", 
                     dpi=300, bbox_inches='tight')
 
         end = time.time()
