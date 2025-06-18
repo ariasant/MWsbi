@@ -61,8 +61,8 @@ args = CLI.parse_args()
 features = args.features
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observations/data/"
-output_dir = '/mnt/aridata1/users/ariasant/auriga-sbi/model_for_observation_shifted/'
+dataframes_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
 
 filename = f"Suite_"+"".join(features)
 
@@ -123,10 +123,6 @@ fig = corner.corner(df[parameters].values,
 fig.savefig(f"{output_dir}merger_parameters_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 
-# Initialize the scaler for the merger parameters
-scaler_params = RobustScaler()
-# Scale the merger parameters
-df[parameters] = scaler_params.fit_transform(df[parameters].values)
 
 # Create datasets for training 
 X_train, Y_train = [], []
@@ -141,27 +137,46 @@ for progID in df["progID"].unique():
     for i in range(n):
         idx_sample = np.random.randint(0, len(prog_data), size=100)
 
-        X_train.append(prog_data[features].values[idx_sample].reshape(-1))
+        X_train.append(prog_data[features].values[idx_sample])
         Y_train.append(prog_data[parameters].values[idx_sample][0])
 
-X_train = np.stack(X_train)
-Y_train = np.stack(Y_train)
+sim_X = np.stack(X_train)
+sim_Y = np.stack(Y_train)
+
+
+# Precompute observational data indices
+obs_idx_samples = np.random.randint(0, len(apogee_ds_processed), size=(len(X_train), 100))
+obs_X = apogee_ds_processed[features].values[obs_idx_samples]
+
+obs_Y = np.vstack([np.array([np.nan] * len(parameters))] * len(obs_X))
+
+# Split data for training and test
+sim_X_train, sim_X_val, sim_Y_train, sim_Y_val = train_test_split(sim_X, sim_Y, test_size=0.2)
+obs_X_train, obs_X_val, obs_Y_train, obs_Y_val = train_test_split(obs_X, obs_Y, test_size=0.2)
+print(f"Sim train examples: {sim_X_train.shape[0]}", flush=True)
+print(f"Obs train examples: {obs_X_train.shape[0]}", flush=True)
+print(f"Sim test examples: {sim_X_val.shape[0]}", flush=True)
+print(f"Obs test examples: {obs_X_val.shape[0]}", flush=True)
+
+np.savez(f"{output_dir}data/train_data", sim_X=sim_X_train, sim_Y=sim_Y_train, obs_X=obs_X_train, obs_Y=obs_Y_train)
+np.savez(f"{output_dir}data/val_data", sim_X=sim_X_val, sim_Y=sim_Y_val, obs_X=obs_X_val, obs_Y=obs_Y_val)
+
+"""f = np.load("/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/data/train_data.npz")
+sim_X_train, sim_Y_train, obs_X_train, obs_Y_train = f["sim_X"], f["sim_Y"], f["obs_X"], f["obs_Y"]
+
+f = np.load("/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/data/val_data.npz")
+sim_X_val, sim_Y_val, obs_X_val, obs_Y_val = f["sim_X"], f["sim_Y"], f["obs_X"], f["obs_Y"]"""
+
 
 
 # Split the data into training and test(validation) sets
-X_train, X_test, Y_train, Y_test = train_test_split(X_train, Y_train, test_size=0.1)
-test_dictionary = {"X": X_test,
-                   "Y": Y_test,
-                   "ID": [f"{i:05}" for i in range(len(Y_test))]}
+test_dictionary = {"X": sim_X_val,
+                   "Y": sim_Y_val,
+                   "ID": [f"{i:05}" for i in range(len(sim_Y_val))]}
 
-print(f"X_train shape: {X_train.shape}", flush=True)
-print(f"Y_train shape: {Y_train.shape}", flush=True)
-print(f"X_test shape: {X_test.shape}", flush=True)
-print(f"Y_test shape: {Y_test.shape}", flush=True)
     
 
 # Save scaler for future analysis
-pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
 pickle.dump(data_processor,open(f"{output_dir}/DataProcessor_{filename}.pkl","wb"))
 # Save processed Milky Way data
 pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
