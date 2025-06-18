@@ -6,12 +6,16 @@ import pandas as pd
 import pickle
 from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import train_test_split
+import time
 
 import sys
 sys.path.append("/mnt/aridata1/users/ariasant/auriga-sbi/")
 from domain_shift import DataProcessor
 import get_results
 import training
+
+sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
+import fishnets
 
 
 def plot_stars_data(dfs: list):
@@ -164,17 +168,70 @@ pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filena
 
 
 
+
 ####################################################################################
 ####################################################################################
 # Training
 ####################################################################################
 ####################################################################################
 
+BATCH_SIZE = 128
+
+# Learn data compression model with fishnet
+compression_model = fishnets.FISHNET(n_params=4,
+                                     n_d=100,
+                                     n_features=len(features),
+                                     n_hidden_layers=1,
+                                     n_nodes_per_layer=10240)
+
+# Train the compression model
+print("Training compression model...", flush=True)
+start = time.time()
+# Repeat training with progressively smaller learning rates
+for lr in [1e-4]:
+    training_results = compression_model.train(data_sim=sim_X_train,
+                                            theta_sim=sim_Y_train,
+                                            data_obs=obs_X_val,
+                                            val_data_sim=sim_X_val,
+                                            val_theta_sim=sim_Y_val,
+                                            val_data_obs=obs_X_val,
+                                            batch_size=BATCH_SIZE,
+                                            lr=lr,
+                                            epochs=500)
+    
+    # Plot training 
+    fig, ax = mpl.pyplot.subplots()
+    ax.plot(training_results['losses'], label="Training Loss")
+    ax.plot(training_results['val_losses'], label="Validation Loss")
+    ax.set_xlabel("Epochs")
+    ax.set_ylabel("Loss (log)")
+    #ax.set_ylim([10, -10])
+    ax.legend()
+    fig.savefig(f"{output_dir}{filename}_compression_model_training_lr{lr}.pdf", dpi=300, bbox_inches='tight')
+
+end = time.time()
+print(f"Compression model trained in {end-start:.2f} seconds", flush=True)
+
+# Save the compression model weights
+pickle.dump(compression_model.w, open(f"{output_dir}{filename}_compression_model_w.pkl", "wb"))
+
+
+
+# Compress data
+print("Compressing data...", flush=True)
+summary_stats, _, __ = compression_model(sim_X_train)
+
+summary_stats_test, _, __ = compression_model(sim_X_val)
+# Update the test dictionary with the compressed data
+test_dictionary = {"X": summary_stats_test,
+                   "Y": sim_Y_val,
+                   "ID": [f"{i:05}" for i in range(len(sim_Y_val))]}
+
 # Train NDE model
-posterior_model = training.NPE_training(X_train=X_train,
-                                        Y_train=Y_train,
-                                        prior_ranges=[scaler_params.transform(np.array([0,6,8,-3])[None,:] )[0],
-                                                      scaler_params.transform(np.array([14,11,12,0])[None,:] )[0]],
+posterior_model = training.NPE_training(X_train=summary_stats,
+                                        Y_train=sim_Y_train,
+                                        prior_ranges=[[0,6,8,-3],
+                                                      [14,11,12,0]],
                                         filename=filename,
                                         output_dir=output_dir)
 
@@ -186,7 +243,7 @@ posterior_model = training.NPE_training(X_train=X_train,
 ####################################################################################
 
 
-"""# Sample parameters for test galaxy
+# Sample parameters for test galaxy
 samples = training.validation(posterior_ensemble=posterior_model,
                               test_dictionary=test_dictionary,
                               filename=filename,
@@ -195,9 +252,9 @@ samples = training.validation(posterior_ensemble=posterior_model,
 # Scale back the merger parameters into the original representation
 for progID in samples.keys():
     theta_pred, log_p, theta_fid = samples[progID]
-    samples[progID] = (scaler_params.inverse_transform(theta_pred),
+    samples[progID] = (theta_pred,
                         log_p,
-                        scaler_params.inverse_transform(theta_fid[None,:])[0])
+                        theta_fid)
 
 
 pickle.dump(samples, 
@@ -226,7 +283,7 @@ get_results.rms_table_per_galaxy(samples={"SUITE":samples},
 get_results.count_predictions_within_range(samples={"SUITE":samples},
                                            parameters=parameters,
                                            percentile_range=[16,84],
-                                           filename=f'{output_dir}range_table_{filename}_3468.csv')"""
+                                           filename=f'{output_dir}range_table_{filename}_1684.csv')
 
 
 
