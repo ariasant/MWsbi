@@ -98,7 +98,8 @@ class DataProcessor:
         sim_data[features] = self.pt_sim.fit_transform(sim_data[features].values)
 
         self.pt_obs = PowerTransformer(method="box-cox", standardize=False)
-        obs_data[features] = self.pt_obs.fit_transform(obs_data[features].values)
+        #obs_data[features] = self.pt_obs.fit_transform(obs_data[features].values)
+        obs_data[features] = self.pt_sim.transform(obs_data[features].values)
 
         # Transform MW data to match simulations
         def transform_gaussian(A,B):
@@ -108,12 +109,12 @@ class DataProcessor:
                 std_B = np.std(B)
                 return B * (std_A/std_B) + (mu_A-mu_B*(std_A/std_B))
     
-        for col in sim_data.features:
+        for col in features:
     
                 obs_data[col] = transform_gaussian(A=sim_data[col].values,
                                                    B=obs_data[col].values
                                           )
-                
+        fig = plot_stars_data([sim_data, obs_data], features=features) 
         fig.savefig(f"/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/DataProcessor_after.pdf", 
                     dpi=300, bbox_inches='tight')
         

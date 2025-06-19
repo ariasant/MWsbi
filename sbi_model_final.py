@@ -2,6 +2,7 @@ import argparse
 import corner
 import matplotlib as mpl
 import numpy as np
+import os
 import pandas as pd
 import pickle
 from sklearn.preprocessing import RobustScaler
@@ -74,8 +75,20 @@ substructures = ['GES', 'Sagittarius', 'Helmi',
 # Data preparation
 ###########################################################################################
 
+
 # Load simulation (source) data
-df = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/auriga_sbi_data.pkl")
+sim_data_list = []
+for file in os.listdir(dataframes_dir):
+
+    df = pd.read_pickle(f"{dataframes_dir}{file}")
+    df.rename(columns={"aFe":"MgFe"}, inplace=True)
+
+    # Get rid of stars with numerical issues
+    df = df[(df["E"]<0) & (df["L"]>0)]
+
+    sim_data_list.append(df)
+
+df = pd.concat(sim_data_list, ignore_index=True)
 df.rename(columns={"aFe":"MgFe"}, inplace=True)
 # Load Milky Way (target) data
 apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")

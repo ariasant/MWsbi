@@ -185,7 +185,7 @@ class FISHNET():
 
 
         @jax.jit
-        def kl_loss(w, x_sim, theta_sim, x_obs, mmd_lambda=2.):
+        def kl_loss(w, x_sim, theta_sim, x_obs, mmd_lambda=0.):
 
             # Standard Fishnet loss (only on simulation samples)
             def fn(x):
