@@ -192,7 +192,7 @@ test_dictionary = {"X": sim_X_val,
 # Save scaler for future analysis
 pickle.dump(data_processor,open(f"{output_dir}/DataProcessor_{filename}.pkl","wb"))
 # Save processed Milky Way data
-pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
+pickle.dump(apogee_ds_processed, open(f"{output_dir}data/apogee_ds_processed_{filename}.pkl", "wb"))
 
 
 
@@ -209,23 +209,21 @@ BATCH_SIZE = 128
 compression_model = fishnets.FISHNET(n_params=4,
                                      n_d=100,
                                      n_features=len(features),
-                                     n_hidden_layers=1,
-                                     n_nodes_per_layer=10240)
+                                     n_hidden_layers=4,
+                                     n_nodes_per_layer=256)
 
 # Train the compression model
 print("Training compression model...", flush=True)
 start = time.time()
 # Repeat training with progressively smaller learning rates
 for lr in [1e-4]:
-    training_results = compression_model.train(data_sim=sim_X_train,
-                                            theta_sim=sim_Y_train,
-                                            data_obs=obs_X_val,
-                                            val_data_sim=sim_X_val,
-                                            val_theta_sim=sim_Y_val,
-                                            val_data_obs=obs_X_val,
-                                            batch_size=BATCH_SIZE,
-                                            lr=lr,
-                                            epochs=500)
+    training_results = compression_model.train(data_=sim_X_train,
+                                               theta_=sim_Y_train,
+                                               val_data_=sim_X_val,
+                                               val_theta_=sim_Y_val,
+                                               batch_size=BATCH_SIZE,
+                                               lr=lr,
+                                               epochs=2000)
     
     # Plot training 
     fig, ax = mpl.pyplot.subplots()

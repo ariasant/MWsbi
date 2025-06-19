@@ -26,7 +26,7 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
 compression_model = fishnets.FISHNET(n_params=4,
                                      n_d=100,
                                      n_features=len(features),
-                                     n_hidden_layers=2,
+                                     n_hidden_layers=4,
                                      n_nodes_per_layer=256)
 # Load trained weights
 w = pickle.load(open(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl","rb")) 

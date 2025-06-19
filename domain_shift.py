@@ -34,6 +34,12 @@ def plot_stars_data(dfs: list, features: list):
                             fig=fig)
     return fig
 
+def transform_gaussian(A,B):
+                mu_A = np.mean(A)
+                mu_B = np.mean(B)
+                std_A = np.std(A)
+                std_B = np.std(B)
+                return B * (std_A/std_B) + (mu_A-mu_B*(std_A/std_B))
 
 class DataProcessor:
 
@@ -63,27 +69,23 @@ class DataProcessor:
             df = df[(df["E"]<0) & (df["L"]>0)]
             
             # Select stars bound to main halo in the Solar area
+            kappa = df["Lz"].values**2 / df["L"].values**2
             df = df[(df["in_satellite"]==0) & 
-                    (df["insitu_flag"]==0) &
-                    (df["r"]<15) & (df["r"]>5)]
+                    (df["r"]<30) & (kappa>0.8)]
 
             sim_data.append(df)
 
         sim_data = pd.concat(sim_data, ignore_index=True)
 
 
-        # 2 Select accreted stars from the apogee sample
+        # 2 Select disc stars from the apogee sample
         df = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
         df = df.dropna(subset=features)
-        obs_data = df[(df["E"]<0)]
-        obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
-                       ((obs_data.AlFe>=-0.07) & (obs_data.MgMn>=4.25*obs_data.AlFe+0.5475))
-        obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_flag"]==1 
-                                            for substructure in ['GES', 'Sagittarius', 'Helmi',
-                                                                 'Sequoia_K19','Sequoia_M19','Sequoia_N20',
-                                                                 'Iitoi', 'Thamnos','LMS', 'Heracles']])
+        obs_data = df[(df["E"]<0) & (df["L"]>0)]
         
-        obs_data = obs_data[obs_accreted]
+        kappa = obs_data["Lz"].values**2 / obs_data["L"].values**2
+        obs_data = obs_data[(obs_data["r"]<30) & (kappa>0.8)]
+        
 
         fig = plot_stars_data([sim_data, obs_data], features=features)
         fig.savefig(f"/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/DataProcessor_before.pdf", 
@@ -102,16 +104,10 @@ class DataProcessor:
         obs_data[features] = self.pt_sim.transform(obs_data[features].values)
 
         # Transform MW data to match simulations
-        def transform_gaussian(A,B):
-                mu_A = np.mean(A)
-                mu_B = np.mean(B)
-                std_A = np.std(A)
-                std_B = np.std(B)
-                return B * (std_A/std_B) + (mu_A-mu_B*(std_A/std_B))
+        self.sim_data = sim_data.copy()
     
         for col in features:
-    
-                obs_data[col] = transform_gaussian(A=sim_data[col].values,
+                obs_data[col] = transform_gaussian(A=self.sim_data[col].values,
                                                    B=obs_data[col].values
                                           )
         fig = plot_stars_data([sim_data, obs_data], features=features) 
@@ -119,9 +115,10 @@ class DataProcessor:
                     dpi=300, bbox_inches='tight')
         
         # Scale data
-        scaler = RobustScaler()
-        sim_data[features] = scaler.fit_transform(sim_data[features].values)
-        obs_data[features] = scaler.transform(obs_data[features].values)
+        self.scaler = RobustScaler()
+        self.scaler.fit(sim_data[features].values)
+        """sim_data[features] = self.scaler.fit_transform(sim_data[features].values)
+        obs_data[features] = self.scaler.transform(obs_data[features].values)
 
         # Remove outliers
         sim_data = sim_data[np.logical_and.reduce([sim_data[feature]**2 < 5**2 for feature in features])]
@@ -129,7 +126,7 @@ class DataProcessor:
 
         fig = plot_stars_data([sim_data, obs_data], features=features)
         fig.savefig(f"/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/DataProcessor_after_outliers.pdf", 
-                    dpi=300, bbox_inches='tight')
+                    dpi=300, bbox_inches='tight')"""
 
         end = time.time()
         print(f"DataProcessor initialized in {end-start:.2f} seconds", flush=True)
@@ -143,6 +140,17 @@ class DataProcessor:
 
         # Apply Box-Cox transformation
         sim_df[self.features] = self.pt_sim.transform(sim_df[self.features].values)
+
+        # Transform MW data to match simulations  
+        for col in self.features:
+                sim_df[col] = transform_gaussian(A=self.sim_data[col].values,
+                                                 B=sim_df[col].values
+                                          )
+        # Apply scaler
+        sim_df[self.features] = self.scaler.transform(sim_df[self.features].values)
+
+        # Remove outliers
+        sim_df = sim_df[np.logical_and.reduce([sim_df[feature]**2 < 5**2 for feature in self.features])]
         
         return sim_df
     
@@ -153,7 +161,19 @@ class DataProcessor:
         obs_df = self.prepare_data_for_Box_Cox(obs_df)
 
         # Apply Box-Cox transformation
-        obs_df[self.features] = self.pt_obs.transform(obs_df[self.features].values)
+        #obs_df[self.features] = self.pt_obs.transform(obs_df[self.features].values)
+        obs_df[self.features] = self.pt_sim.transform(obs_df[self.features].values)
+
+        # Transform MW data to match simulations  
+        for col in self.features:
+                obs_df[col] = transform_gaussian(A=self.sim_data[col].values,
+                                                 B=obs_df[col].values
+                                          )
+        # Apply scaler
+        obs_df[self.features] = self.scaler.transform(obs_df[self.features].values)
+
+        # Remove outliers
+        obs_df = obs_df[np.logical_and.reduce([obs_df[feature]**2 < 5**2 for feature in self.features])]
 
         return obs_df
 
