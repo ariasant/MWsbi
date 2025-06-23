@@ -195,7 +195,7 @@ for progID in sim_data["progID"].unique():
     for i in range(n):
         idx_sample = np.random.randint(0, len(prog_data), size=100)
 
-        X_train.append(prog_data[features].values[idx_sample].reshape(-1))
+        X_train.append(prog_data[features].values[idx_sample])
         Y_train.append(prog_data[parameters].values[idx_sample][0])
 
 X_train = np.stack(X_train)
