@@ -48,7 +48,6 @@ for substructure in substructures:
     if substructure=="GES":
         df_sub = df[df[substructure+"_flag"]==1]
         # Improve purity of GES sample
-        #df_sub = df_sub[df_sub["FeH"]<-0.6]
         print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
     elif substructure=="Sagittarius":

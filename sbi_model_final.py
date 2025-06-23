@@ -1,6 +1,7 @@
 import argparse
 import corner
 import matplotlib as mpl
+import math
 import numpy as np
 import os
 import pandas as pd
@@ -10,7 +11,6 @@ from sklearn.model_selection import train_test_split
 
 import sys
 sys.path.append("/mnt/aridata1/users/ariasant/auriga-sbi/")
-from domain_shift import DataProcessor
 import get_results
 import training
 
@@ -77,9 +77,9 @@ print(f"output_dir: {output_dir}", flush=True)
 
 filename = f"Suite_"+"".join(features)
 
-substructures = ['GES', 'Sagittarius', 'Helmi',
-       'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
-       'LMS', 'Heracles']
+substructures = ['Arjuna','GES', 'Sagittarius', 'Helmi',
+                 'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
+                 'LMS', 'Heracles']
 
 ###########################################################################################
 # Data preparation
@@ -95,7 +95,9 @@ for file in os.listdir(data_dir):
     df.rename(columns={"aFe":"MgFe"}, inplace=True)
 
     # Get rid of stars with numerical issues
-    df = df[(df["E"]<0) & (df["L"]>0)]
+    df = df[(df["E"]<0) & (df["L"]>0) & 
+            (df["MgFe"]<0.5) & (df["MgFe"]>-0.5) &
+            (df["FeH"]<1) & (df["FeH"]>-3)]
 
     # Shift chemical abundances
     df["FeH"] = df["FeH"]-args.FeH_shift
@@ -103,66 +105,62 @@ for file in os.listdir(data_dir):
 
     sim_data.append(df)
 
-df = pd.concat(sim_data, ignore_index=True)
+sim_data = pd.concat(sim_data, ignore_index=True)
 
 # Load Milky Way (target) data
 apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
 apogee_ds_satellites = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
 apogee_ds = pd.concat([apogee_ds, apogee_ds_satellites])
 apogee_ds.dropna(subset=features, inplace=True)
+apogee_ds = apogee_ds[(apogee_ds["E"]<0)&(apogee_ds["L"]>0)]
 # Select accreted stars
 obs_accreted = ((apogee_ds.AlFe<-0.07) & (apogee_ds.MgMn>=0.25)) | \
                ((apogee_ds.AlFe>=-0.07) & (apogee_ds.MgMn>=4.25*apogee_ds.AlFe+0.5475))
 obs_accreted = np.logical_or.reduce([obs_accreted]+[apogee_ds[f"{substructure}_flag"]==1 
-                                    for substructure in ['GES', 'Sagittarius', 'Helmi',
-                                                         'Sequoia_K19','Sequoia_M19','Sequoia_N20',
-                                                         'Iitoi', 'Thamnos','LMS', 'Heracles']])
+                                    for substructure in substructures])
 
 
 
 obs_data = apogee_ds
 
 # Plot initial data
-fig = plot_stars_data([df, obs_data, obs_data[obs_accreted]],
+fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]],
                       RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-0.2, 0.6)])
 fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 
 # Preprocess data
-sim_data, obs_data, pt, FeH_min, MgFe_min = DataProcessor(features=features,
-                                                          sim_data=df,
-                                                          obs_data=obs_data)
+sim_data["E"] = np.log(-sim_data["E"].values)
+sim_data["L"] = np.log(sim_data["L"].values)
 
-# Repeat accreted stars selection because of the transformation
-obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
-               ((obs_data.AlFe>=-0.07) & (obs_data.MgMn>=4.25*obs_data.AlFe+0.5475))
-obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_flag"]==1 
-                                    for substructure in ['GES', 'Sagittarius', 'Helmi',
-                                                         'Sequoia_K19','Sequoia_M19','Sequoia_N20',
-                                                         'Iitoi', 'Thamnos','LMS', 'Heracles']])
-apogee_ds_processed = obs_data[obs_accreted]
+obs_data["E"] = np.log(-obs_data["E"].values)
+obs_data["L"] = np.log(obs_data["L"].values)
+
+data_scaler = RobustScaler()
+sim_data[features] = data_scaler.fit_transform(sim_data[features].values)
+obs_data[features] = data_scaler.transform(obs_data[features].values)
+
 
 # Plot data after processing
-fig = plot_stars_data([df, obs_data, apogee_ds_processed],
-                      RANGE=[(-3.3,3.3) for _ in range(len(features))])
+fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]],
+                      RANGE=[(-3,3), (-3, 3), (-3, 3), (-3, 3)])
 fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 ## Print the number of stars in each substructure of the MW before and after removing outliers
 print("Counting stars in each substructure of the MW before and after removing outliers:", flush=True)
 for substructure in substructures:
     n_before = sum(apogee_ds[f"{substructure}_flag"]==1)
-    n_after = sum(apogee_ds_processed[f"{substructure}_flag"]==1)
     print("="*50, flush=True)
-    print(f"{substructure}: {n_before} -> {n_after}", flush=True)
+    print(f"{substructure}: {n_before}", flush=True)
     print("="*50, flush=True)
 
     # Plot the stars in each substructure
-    fig = plot_stars_data([df, apogee_ds_processed[apogee_ds_processed[f"{substructure}_flag"]==1]])
+    fig = plot_stars_data([sim_data, obs_data[obs_data[f"{substructure}_flag"]==1]] )
     fig.savefig(f"{output_dir}transformed_data_{filename}_shifted_{substructure}.pdf", dpi=300, bbox_inches='tight')
 
 
 # Plot merger parameters
-fig = corner.corner(df[parameters].values,
+fig = corner.corner(sim_data[parameters].values,
                     color='k',
                     labels=parameters,
                     bins=20,
@@ -176,20 +174,20 @@ fig.savefig(f"{output_dir}merger_parameters_{filename}.pdf", dpi=300, bbox_inche
 # Initialize the scaler for the merger parameters
 scaler_params = RobustScaler()
 # Scale the merger parameters
-df[parameters] = scaler_params.fit_transform(df[parameters].values)
+sim_data[parameters] = scaler_params.fit_transform(sim_data[parameters].values)
 
-print(f"N progID: {len(df['progID'].unique())}", flush=True)
+print(f"N progID: {len(sim_data['progID'].unique())}", flush=True)
 
 # Create datasets for training 
 X_train, Y_train = [], []
-n = 100 # number of samples per progenitor
 
-for progID in df["progID"].unique():
+for progID in sim_data["progID"].unique():
     # Get the data for the current progenitor
-    prog_data = df[df["progID"]==progID]
+    prog_data = sim_data[sim_data["progID"]==progID]
     if len(prog_data) < 100:
         continue
     # Sample the data n times
+    n = min(100, math.ceil(len(prog_data)//100))
     for i in range(n):
         idx_sample = np.random.randint(0, len(prog_data), size=100)
 
@@ -213,11 +211,10 @@ print(f"Y_test shape: {Y_test.shape}", flush=True)
     
 
 # Save scalers for future analysis
-pickle.dump(pt,open(f"{output_dir}/X_scaler_{filename}.pkl","wb"))
-np.savez(f"{output_dir}/min_values_{filename}", FeH=FeH_min, MgFe=MgFe_min)
+pickle.dump(data_scaler,open(f"{output_dir}/data_scaler_{filename}.pkl","wb"))
 pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
 # Save processed Milky Way data
-pickle.dump(apogee_ds_processed, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
+pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
 
 
