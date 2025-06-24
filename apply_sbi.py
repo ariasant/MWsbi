@@ -9,8 +9,8 @@ import sys
 sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
 import fishnets
 
-model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
+model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shift04/"
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shift04/"
 
 features=["E","L","FeH","MgFe"]
 
@@ -29,7 +29,7 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
 compression_model = fishnets.FISHNET(n_params=4,
                                      n_d=100,
                                      n_features=len(features),
-                                     n_hidden_layers=2,
+                                     n_hidden_layers=5,
                                      n_nodes_per_layer=256)
 # Load trained weights
 w = pickle.load(open(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl","rb")) 
@@ -47,12 +47,12 @@ for substructure in substructures:
     if substructure!="Heracles":
         df_sub = df[df[substructure+"_flag"]==1]
         # Remove stars from the GES sample that are too close to the Galaxy centre
-        df_sub = df_sub[(df_sub.GAL_LAT**2>20**2) & (df_sub.GAL_LON**2>20**2)]
+        #df_sub = df_sub[(df_sub.GAL_LAT**2>20**2) & (df_sub.GAL_LON**2>20**2)]
 
     if substructure=="GES":
         df_sub = df[df[substructure+"_flag"]==1]
         # Improve purity of GES sample
-        df_sub = df_sub[df_sub["FeH"]<-0.6]
+        #df_sub = df_sub[df_sub["FeH"]<-0.6]
         print(f"N stars in {substructure}: {df_sub.shape[0]:,}", flush=True)
 
     elif substructure=="Sagittarius":

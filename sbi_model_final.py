@@ -11,12 +11,10 @@ from sklearn.model_selection import train_test_split
 import time
 
 import sys
-sys.path.append("/mnt/aridata1/users/ariasant/auriga-sbi/")
-import get_results
-import training
-
 sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
 import fishnets
+import sbi_results
+import sbi_training
 
 
 def plot_stars_data(dfs: list, RANGE=None):
@@ -52,7 +50,6 @@ def plot_stars_data(dfs: list, RANGE=None):
     return fig
 
 
-
 CLI = argparse.ArgumentParser()
 CLI.add_argument(
         "--features",
@@ -68,7 +65,7 @@ CLI.add_argument(
 CLI.add_argument(
         "--output_dir",
         type=str,
-        default='/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shift02/'
+        default='/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shift04/'
     )
 
 args = CLI.parse_args()
@@ -89,6 +86,19 @@ substructures = ['Arjuna','GES', 'Sagittarius', 'Helmi',
 # Data preparation
 ###########################################################################################
 
+# Load Milky Way (target) data
+obs_data = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
+apogee_ds_satellites = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
+obs_data = pd.concat([obs_data, apogee_ds_satellites])
+obs_data.dropna(subset=features, inplace=True)
+obs_data = obs_data[(obs_data["E"]<0)&(obs_data["L"]>0)]
+# Select accreted stars
+obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
+               ((obs_data.AlFe>=-0.07) & (obs_data.MgMn>=4.25*obs_data.AlFe+0.5475))
+obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_flag"]==1 
+                                    for substructure in substructures])
+
+
 # Load simulation (source) data
 data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
 sim_data = []
@@ -104,28 +114,16 @@ for file in os.listdir(data_dir):
             (df["FeH"]<1) & (df["FeH"]>-3)]
 
     # Shift chemical abundances
-    df["FeH"] = df["FeH"]-args.FeH_shift
+    df["FeH"] = df["FeH"]-0.4
     df["MgFe"] = df["MgFe"]+0.4
 
     sim_data.append(df)
 
 sim_data = pd.concat(sim_data, ignore_index=True)
 
-# Load Milky Way (target) data
-apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
-apogee_ds_satellites = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
-apogee_ds = pd.concat([apogee_ds, apogee_ds_satellites])
-apogee_ds.dropna(subset=features, inplace=True)
-apogee_ds = apogee_ds[(apogee_ds["E"]<0)&(apogee_ds["L"]>0)]
-# Select accreted stars
-obs_accreted = ((apogee_ds.AlFe<-0.07) & (apogee_ds.MgMn>=0.25)) | \
-               ((apogee_ds.AlFe>=-0.07) & (apogee_ds.MgMn>=4.25*apogee_ds.AlFe+0.5475))
-obs_accreted = np.logical_or.reduce([obs_accreted]+[apogee_ds[f"{substructure}_flag"]==1 
-                                    for substructure in substructures])
+# Rank matching simulations to MW stars
+#sim_data = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/sim_match2_obs/sim_data.pkl")
 
-
-
-obs_data = apogee_ds
 
 # Plot initial data
 fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]],
@@ -140,6 +138,14 @@ sim_data["L"] = np.log(sim_data["L"].values)
 obs_data["E"] = np.log(-obs_data["E"].values)
 obs_data["L"] = np.log(obs_data["L"].values)
 
+# Match energy and angular momentum distributions with observations
+match_gaussian = lambda feat: sim_data[feat].values * (obs_data.loc[obs_accreted,feat].std()/sim_data[feat].std()) + \
+    (obs_data.loc[obs_accreted,feat].mean()-sim_data[feat].mean()*obs_data.loc[obs_accreted,feat].std()/sim_data[feat].std())
+
+sim_data["E"] = match_gaussian("E")
+sim_data["L"] = match_gaussian("L")
+
+
 data_scaler = RobustScaler()
 sim_data[features] = data_scaler.fit_transform(sim_data[features].values)
 obs_data[features] = data_scaler.transform(obs_data[features].values)
@@ -153,7 +159,7 @@ fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches
 ## Print the number of stars in each substructure of the MW before and after removing outliers
 print("Counting stars in each substructure of the MW before and after removing outliers:", flush=True)
 for substructure in substructures:
-    n_before = sum(apogee_ds[f"{substructure}_flag"]==1)
+    n_before = sum(obs_data[f"{substructure}_flag"]==1)
     print("="*50, flush=True)
     print(f"{substructure}: {n_before}", flush=True)
     print("="*50, flush=True)
@@ -231,7 +237,7 @@ pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "
 compression_model = fishnets.FISHNET(n_params=4,
                                      n_d=100,
                                      n_features=len(features),
-                                     n_hidden_layers=2,
+                                     n_hidden_layers=5,
                                      n_nodes_per_layer=256)
 
 # Train the compression model
@@ -241,7 +247,7 @@ training_results = compression_model.train(data_=X_train,
                                            theta_=Y_train,
                                            val_data_=X_test,
                                            val_theta_=Y_test,
-                                           batch_size=1024,
+                                           batch_size=256,
                                            lr=1e-4,
                                            epochs=3000)
 end = time.time()
@@ -271,7 +277,7 @@ summary_stats_test, _, __ = compression_model(X_test)
 test_dictionary["X"] = summary_stats_test
 
 # Train NDE model
-posterior_model = training.NPE_training(X_train=summary_stats,
+posterior_model = sbi_training.NPE_training(X_train=summary_stats,
                                         Y_train=Y_train,
                                         prior_ranges=[scaler_params.transform(np.array([0,6,8,-3])[None,:] )[0],
                                                       scaler_params.transform(np.array([14,11,12,0])[None,:] )[0]],
@@ -287,7 +293,7 @@ posterior_model = training.NPE_training(X_train=summary_stats,
 
 
 # Sample parameters for test galaxy
-samples = training.validation(posterior_ensemble=posterior_model,
+samples = sbi_training.validation(posterior_ensemble=posterior_model,
                               test_dictionary=test_dictionary,
                               filename=filename,
                               output_dir=output_dir)
@@ -312,18 +318,18 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'MMR (log)']
 plot_ranges=[[0.1,13.9],[5.9,10.9],[7.1,11.9],[-3.2,-0.1]]
 
-get_results.cross_validation_plot(samples=[samples],
+sbi_results.cross_validation_plot(samples=[samples],
                                   percentile_range=[16,84],
                                   plot_labels=plot_labels,
                                   plot_ranges=plot_ranges,
                                   filename=f'{output_dir}cross_validation_1684_{filename}.png')
 
 # Save table with quantitative results 
-get_results.rms_table_per_galaxy(samples={"SUITE":samples},
+sbi_results.rms_table_per_galaxy(samples={"SUITE":samples},
                                  parameters=parameters,
                                  filename=f'{output_dir}rms_table_{filename}.csv')
 
-get_results.count_predictions_within_range(samples={"SUITE":samples},
+sbi_results.count_predictions_within_range(samples={"SUITE":samples},
                                            parameters=parameters,
                                            percentile_range=[16,84],
                                            filename=f'{output_dir}range_table_{filename}_1684.csv')
