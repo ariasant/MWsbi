@@ -9,8 +9,8 @@ import sys
 sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
 import fishnets
 
-model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shift04/"
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shift04/"
+model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/"
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/"
 
 features=["E","L","FeH","MgFe"]
 
@@ -18,7 +18,7 @@ features=["E","L","FeH","MgFe"]
 posterior = pickle.load(open(f"{model_dir}Suite_ELFeHMgFe.pkl","rb"))
 
 # Data processing tools
-theta_scaler = pickle.load(open(f"{model_dir}theta_scaler_Suite_ELFeHMgFe.pkl","rb")) # progenitor properties scaler
+theta_scaler = pickle.load(open(f"{model_dir}data/theta_scaler_Suite_ELFeHMgFe.pkl","rb")) # progenitor properties scaler
 
 plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'log($M_{*}/M_{\odot}$)',
@@ -36,7 +36,7 @@ w = pickle.load(open(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl","rb"
 compression_model.w = w
 
 # Load pre-processed apogee sample
-df = pd.read_pickle(f"{model_dir}apogee_ds_processed_Suite_ELFeHMgFe.pkl")
+df = pd.read_pickle(f"{model_dir}data/apogee_ds_processed_Suite_ELFeHMgFe.pkl")
 
 substructures = ['Arjuna', 'GES', 'Sagittarius', 'Helmi',
        'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',

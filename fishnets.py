@@ -6,6 +6,7 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 import optax
+import pickle
 import tensorflow_probability.substrates.jax as tfp
 from tqdm import tqdm
 from typing import Sequence, Any, Callable
@@ -125,7 +126,8 @@ class FISHNET():
               val_theta_: np.ndarray = None,
               lr: float = 1e-4,
               batch_size: int = 200,
-              epochs: int = 3000
+              epochs: int = 3000,
+              weights_dir: str = None
               ):
         
         # Convert data to JAX arrays
@@ -198,6 +200,10 @@ class FISHNET():
             inits = (self.w, loss_val, opt_state, _data, _theta)
 
             self.w, loss_val, opt_state, _data, _theta = jax.lax.fori_loop(lower, upper, body_fun, inits)
+
+            if weights_dir is not None:
+                # Save weights
+                pickle.dump(self.w, open(f"{weights_dir}/epoch_{j}.pkl","wb"))
 
             losses = losses.at[j].set(loss_val)
 
