@@ -1,12 +1,7 @@
-import argparse
-import corner
-import matplotlib as mpl
 import math
 import numpy as np
-import os
 import pandas as pd
 import pickle
-from sklearn.preprocessing import RobustScaler
 from sklearn.model_selection import train_test_split
 
 import sys
@@ -15,166 +10,23 @@ import get_results
 import training
 
 
-def plot_stars_data(dfs: list, RANGE=None):
-
-    # Initialize color list for the different dataframes
-    colors = [mpl.cm.tab10(i/len(dfs)) for i in range(len(dfs))]
-
-    for i, df in enumerate(dfs):
-
-        if i==0:
-            fig = corner.corner(df[features].values,
-                                color=colors[i],
-                                labels=features,
-                                bins=20,
-                                plot_contours=True,
-                                plot_datapoints=False,
-                                fill_contours=True,
-                                hist_kwargs={"density": True},
-                                alpha=0.5,
-                                range=RANGE
-                                )
-        else:
-            corner.corner(df[features].values,
-                            color=colors[i],
-                            bins=20,
-                            plot_contours=True,
-                            plot_datapoints=False,
-                            fill_contours=True,
-                            hist_kwargs={"density": True},
-                            alpha=0.5,
-                            range=RANGE,
-                            fig=fig)
-    return fig
-
-
-
-CLI = argparse.ArgumentParser()
-CLI.add_argument(
-        "--features",
-        nargs="*",
-        type=str,
-        default=['E', 'L', 'FeH', 'MgFe']
-    )
-CLI.add_argument(
-        "--FeH_shift",
-        type=float,
-        default=0.2
-    )
-CLI.add_argument(
-        "--output_dir",
-        type=str,
-        default='/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/'
-    )
-
-args = CLI.parse_args()
-features = args.features
-parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
-
-output_dir = args.output_dir
-
-print(f"output_dir: {output_dir}", flush=True)
-
-filename = f"Suite_"+"".join(features)
-
-substructures = ['Arjuna','GES', 'Sagittarius', 'Helmi',
-                 'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
-                 'LMS', 'Heracles']
 
 ###########################################################################################
 # Data preparation
 ###########################################################################################
 
-# Load simulation (source) data
-data_dir = "/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/"
-sim_data = []
+# Load training and test data
+features = ["E","L","FeH","MgFe"]
+parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
+filename = f"Suite_"+"".join(features)
 
-for file in os.listdir(data_dir):
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/coral/'
 
-    df = pd.read_pickle(f"{data_dir}{file}")
-    df.rename(columns={"aFe":"MgFe"}, inplace=True)
-
-    # Get rid of stars with numerical issues
-    df = df[(df["E"]<0) & (df["L"]>0) & 
-            (df["MgFe"]<0.5) & (df["MgFe"]>-0.5) &
-            (df["FeH"]<1) & (df["FeH"]>-3)]
-
-    # Shift chemical abundances
-    df["FeH"] = df["FeH"]-args.FeH_shift
-    df["MgFe"] = df["MgFe"]+0.4
-
-    sim_data.append(df)
-
-sim_data = pd.concat(sim_data, ignore_index=True)
-
-# Load Milky Way (target) data
-apogee_ds = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
-apogee_ds_satellites = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_satellites_ds.pkl")
-apogee_ds = pd.concat([apogee_ds, apogee_ds_satellites])
-apogee_ds.dropna(subset=features, inplace=True)
-apogee_ds = apogee_ds[(apogee_ds["E"]<0)&(apogee_ds["L"]>0)]
-# Select accreted stars
-obs_accreted = ((apogee_ds.AlFe<-0.07) & (apogee_ds.MgMn>=0.25)) | \
-               ((apogee_ds.AlFe>=-0.07) & (apogee_ds.MgMn>=4.25*apogee_ds.AlFe+0.5475))
-obs_accreted = np.logical_or.reduce([obs_accreted]+[apogee_ds[f"{substructure}_flag"]==1 
-                                    for substructure in substructures])
+sim_data = pd.read_pickle(f"{output_dir}/data/sim_ds_processed_{filename}.pkl")
+obs_data = pd.read_pickle(f"{output_dir}/data/apogee_ds_processed_{filename}.pkl")
+scaler_params = pickle.load(open(f"{output_dir}/data/theta_scaler_Suite_ELFeHMgFe.pkl","rb")) 
 
 
-
-obs_data = apogee_ds
-
-# Plot initial data
-fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]],
-                      RANGE=[(-3e5, 0), (0, 1e4), (-3, 1), (-0.2, 0.6)])
-fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='tight')
-
-
-# Preprocess data
-sim_data["E"] = np.log(-sim_data["E"].values)
-sim_data["L"] = np.log(sim_data["L"].values)
-
-obs_data["E"] = np.log(-obs_data["E"].values)
-obs_data["L"] = np.log(obs_data["L"].values)
-
-data_scaler = RobustScaler()
-sim_data[features] = data_scaler.fit_transform(sim_data[features].values)
-obs_data[features] = data_scaler.transform(obs_data[features].values)
-
-
-# Plot data after processing
-fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]],
-                      RANGE=[(-3,3), (-3, 3), (-3, 3), (-3, 3)])
-fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
-
-## Print the number of stars in each substructure of the MW before and after removing outliers
-print("Counting stars in each substructure of the MW before and after removing outliers:", flush=True)
-for substructure in substructures:
-    n_before = sum(apogee_ds[f"{substructure}_flag"]==1)
-    print("="*50, flush=True)
-    print(f"{substructure}: {n_before}", flush=True)
-    print("="*50, flush=True)
-
-    # Plot the stars in each substructure
-    fig = plot_stars_data([sim_data, obs_data[obs_data[f"{substructure}_flag"]==1]] )
-    fig.savefig(f"{output_dir}transformed_data_{filename}_shifted_{substructure}.pdf", dpi=300, bbox_inches='tight')
-
-
-# Plot merger parameters
-fig = corner.corner(sim_data[parameters].values,
-                    color='k',
-                    labels=parameters,
-                    bins=20,
-                    plot_contours=False,
-                    plot_datapoints=False,
-                    fill_contours=False,
-                    hist_kwargs={"density": True})
-fig.savefig(f"{output_dir}merger_parameters_{filename}.pdf", dpi=300, bbox_inches='tight')
-
-
-# Initialize the scaler for the merger parameters
-scaler_params = RobustScaler()
-# Scale the merger parameters
-sim_data[parameters] = scaler_params.fit_transform(sim_data[parameters].values)
 
 print(f"N progID: {len(sim_data['progID'].unique())}", flush=True)
 
@@ -208,13 +60,6 @@ print(f"X_train shape: {X_train.shape}", flush=True)
 print(f"Y_train shape: {Y_train.shape}", flush=True)
 print(f"X_test shape: {X_test.shape}", flush=True)
 print(f"Y_test shape: {Y_test.shape}", flush=True)
-    
-
-# Save scalers for future analysis
-pickle.dump(data_scaler,open(f"{output_dir}/data_scaler_{filename}.pkl","wb"))
-pickle.dump(scaler_params,open(f"{output_dir}/theta_scaler_{filename}.pkl","wb"))
-# Save processed Milky Way data
-pickle.dump(obs_data, open(f"{output_dir}/apogee_ds_processed_{filename}.pkl", "wb"))
 
 
 

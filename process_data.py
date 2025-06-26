@@ -44,7 +44,7 @@ def plot_stars_data(dfs: list, RANGE=None):
 features = ['E', 'L', 'FeH', 'MgFe']
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/coral/'
 
 print(f"output_dir: {output_dir}", flush=True)
 
@@ -113,9 +113,8 @@ sim_df_accreted["E"] = np.log(-sim_df_accreted["E"].values)
 sim_df_accreted["L"] = np.log(sim_df_accreted["L"].values)
 
 # Match the mean of feature distribution to the target ones
-mean_shifts=sim_df_accreted[features].mean().values - obs_data.loc[obs_accreted,features].mean().values
-mean_shifts[2]=0.4
-mean_shifts[3]=-0.4
+#mean_shifts=sim_df_accreted[features].mean().values - obs_data.loc[obs_accreted,features].mean().values
+mean_shifts = np.array([0,0,0.24,-0.41])
 
 sim_data[features] = sim_data[features] - mean_shifts
 
@@ -138,7 +137,7 @@ obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_fl
 # Match covariance matrices with coral
 coral_model = CORAL()
 sim_data[features] = coral_model.fit_transform(Xs=sim_data[features].values, 
-                                                     Xt=obs_data.loc[obs_accreted,features])
+                                               Xt=obs_data.loc[obs_accreted,features])
 
 # Plot data after processing
 fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]])

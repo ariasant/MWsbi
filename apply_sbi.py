@@ -10,7 +10,7 @@ CLI = argparse.ArgumentParser()
 CLI.add_argument(
         "--model_dir",
         type=str,
-        default="/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
+        default="/mnt/aridata1/users/ariasant/MW-sbi/coral/"
     )
 
 
@@ -24,7 +24,7 @@ features=["E","L","FeH","MgFe"]
 posterior = pickle.load(open(f"{model_dir}Suite_ELFeHMgFe.pkl","rb"))
 
 # Data processing tools
-theta_scaler = pickle.load(open(f"{model_dir}theta_scaler_Suite_ELFeHMgFe.pkl","rb")) # progenitor properties scaler
+theta_scaler = pickle.load(open(f"{model_dir}data/theta_scaler_Suite_ELFeHMgFe.pkl","rb")) # progenitor properties scaler
 
 plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'log($M_{*}/M_{\odot}$)',
@@ -32,7 +32,7 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'MMR (log)']
 
 # Load pre-processed apogee sample
-df = pd.read_pickle(f"{model_dir}apogee_ds_processed_Suite_ELFeHMgFe.pkl")
+df = pd.read_pickle(f"{model_dir}data/apogee_ds_processed_Suite_ELFeHMgFe.pkl")
 
 substructures = ['Arjuna', 'GES', 'Sagittarius', 'Helmi',
        'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
