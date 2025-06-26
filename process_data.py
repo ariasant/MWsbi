@@ -1,12 +1,61 @@
 from adapt.feature_based import CORAL
 import corner
-import math
 import matplotlib as mpl
 import numpy as np
 import os
 import pandas as pd
 import pickle
 from sklearn.preprocessing import RobustScaler
+
+def call_plotting_formatting():
+
+    font = {'family' : 'sans-serif',
+    'weight' : 'medium',
+    'size'   : 15,
+    'variant' : 'normal',
+    'style' : 'normal',
+    'stretch' : 'normal',
+    }
+
+    xtick = {'top' : True,
+            'bottom' : True,
+            'major.size' : 7,
+            'minor.size' : 4,
+            'major.width' : 0.5,
+            'minor.width' : 0.35,
+            'direction' : 'in',
+            'minor.visible' : True,
+            'color' : 'black',
+            'labelcolor' : 'black'
+            }
+
+    ytick = {'left' : True,
+            'right' : True,
+            'major.size' : 7,
+            'minor.size' : 4,
+            'major.width' : 0.5,
+            'minor.width' : 0.35,
+            'direction' : 'in',
+            'minor.visible' : True,
+            'color' : 'black',
+            'labelcolor' : 'black'
+            }
+
+    mpl.rcParams['savefig.format'] = 'pdf'
+    mpl.rcParams['savefig.bbox'] = 'tight'
+    mpl.rcParams['figure.figsize'] = (6.973848069738481, 4.310075139476229)
+    mpl.rcParams['figure.subplot.hspace'] = 0.01
+
+    mpl.rc('font', **font)
+    mpl.rc('xtick', **xtick)
+    mpl.rc('ytick', **ytick)
+    mpl.rcParams['legend.fontsize'] = 18
+    mpl.rcParams["font.sans-serif"] = ["DejaVu Serif"]
+    mpl.rcParams['mathtext.fontset']='dejavuserif'
+    mpl.rcParams["text.usetex"] = False
+
+call_plotting_formatting()
+
 
 def plot_stars_data(dfs: list, RANGE=None):
 
@@ -18,14 +67,15 @@ def plot_stars_data(dfs: list, RANGE=None):
         if i==0:
             fig = corner.corner(df[features].values,
                                 color=colors[i],
-                                labels=features,
+                                labels=["$E$", "$L$", "[Fe/H]", "[Mg/Fe]"],
                                 bins=20,
                                 plot_contours=True,
                                 plot_datapoints=False,
                                 fill_contours=True,
                                 hist_kwargs={"density": True},
                                 alpha=0.5,
-                                range=RANGE
+                                range=RANGE,
+                                label_kwargs={'fontsize': 18},
                                 )
         else:
             corner.corner(df[features].values,
@@ -37,14 +87,16 @@ def plot_stars_data(dfs: list, RANGE=None):
                             hist_kwargs={"density": True},
                             alpha=0.5,
                             range=RANGE,
+                            label_kwargs={'fontsize': 18},
                             fig=fig)
+            
     return fig
 
 
 features = ['E', 'L', 'FeH', 'MgFe']
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/coral/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/'
 
 print(f"output_dir: {output_dir}", flush=True)
 
@@ -113,8 +165,9 @@ sim_df_accreted["E"] = np.log(-sim_df_accreted["E"].values)
 sim_df_accreted["L"] = np.log(sim_df_accreted["L"].values)
 
 # Match the mean of feature distribution to the target ones
-#mean_shifts=sim_df_accreted[features].mean().values - obs_data.loc[obs_accreted,features].mean().values
-mean_shifts = np.array([0,0,0.24,-0.41])
+mean_shifts=sim_df_accreted[features].mean().values - obs_data.loc[obs_accreted,features].mean().values
+#mean_shifts[2]=0.4
+#mean_shifts[3]=-0.4
 
 sim_data[features] = sim_data[features] - mean_shifts
 
@@ -140,7 +193,22 @@ sim_data[features] = coral_model.fit_transform(Xs=sim_data[features].values,
                                                Xt=obs_data.loc[obs_accreted,features])
 
 # Plot data after processing
-fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]])
+fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]], 
+                      RANGE=[(-4,4), (-4,4), (-4,4), (-4,4)])
+# Add legend
+labels = ["Auriga", "APOGEE", "APOGEE (accreted)"]
+colors = [mpl.cm.tab10(i/3) for i in range(3)]
+mpl.pyplot.legend(
+        handles=[
+            mpl.lines.Line2D([], [], 
+                             linewidth=5,
+                             color=colors[i], 
+                             label=labels[i])
+            for i in range(3)
+        ],
+        fontsize=20, frameon=False,
+        bbox_to_anchor=(1, 4), loc="upper right"
+        )
 fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 """# Plot the stars in each substructure
