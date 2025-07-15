@@ -353,28 +353,28 @@ fig.savefig(f"{output_dir}alphaIron.pdf", dpi=300)
 #########################################################################################
 
 infall_times = {
-    "GES": [(8,11), 10, 10, (10.2,0.2,0.1), 9.1, (7,9), 10, 10.5, 10.5, (10.2,0.2,0.2)],
-    "Helmi": [(6,9), (5,8), 10.1, 7.9, 8, 9.4],
+    "GES": [ 10, (10.2,0.2,0.1), (9.1,0.7,0.7), (7,9), 10, 10.5, 10.5, (10.2,0.2,0.2)],
+    "Helmi": [(6,9), (5,8), (10.1,0.7,1.2), 7.9, 8, (9.4,1.9,1.9)],
     "Heracles": [(10.5,11.6)],
-    "Iitoi": [10.4],
-    "LMS": [8, 8.3, 12.9],
-    "Sagittarius": [(5,7), 6.8, 5.5, (3,4), 5.9,],
-    "Sequoia_K19": [9, 9.4, (8,11), 11.6],
-    "Sequoia_M19": [9, 9.4, (8,11), 11.6],
-    "Sequoia_N20": [9, 9.4, (8,11), 11.6],
+    "Iitoi": [(10.4,3.2,3.2)],
+    "LMS": [8, 8.3, (12.9,1.3,1.3)],
+    "Sagittarius": [(5,7), (6.8,1.1,1.1), 5.5, (3,4), 5.9,],
+    "Sequoia_K19": [9, (9.4,0.4,0.5), (8,11), (11.6,2.4,2.4)],
+    "Sequoia_M19": [9, (9.4,0.4,0.5), (8,11), (11.6,2.4,2.4)],
+    "Sequoia_N20": [9, (9.4,0.4,0.5), (8,11), (11.6,2.4,2.4)],
     "Thamnos": [(13,14), 13.4]
 }
 
 stellar_masses = {
-    "GES": [8.8, (8.5,9), 9.7, (8.5,0.1,0.2), (8.85,9.85), (8.43,0.15,0.16), 9.5, 8.7, 8.8, (8.16,0.21,0.17)],
-    "Helmi": [8.3, 8, (7.96,0.19,0.18), 8],
+    "GES": [8.8, (8.5,9), 9.7, (8.5,0.1,0.2), (8.85,9.85), (8.43,0.15,0.16), 9.5, 8.7, (8.64,0.4,0.44), (8.8,8.9), (8.16,0.21,0.17)],
+    "Helmi": [8.3, 8, (7.96,0.19,0.18), (8.26, 0.38, 0.42), 8],
     "Heracles": [8.7, 8.86],
     "Iitoi": [6.3],
     "LMS": [(6,7), 7.1],
-    "Sagittarius": [8, 7.3, (8.44,0.22,0.21), 9.3, 8.8],
-    "Sequoia_K19": [7.7, (7.9,0.11,0.11), 7.2],
-    "Sequoia_M19": [7.7, (7.9,0.11,0.11), 7.2],
-    "Sequoia_N20": [7.7, (7.9,0.11,0.11), 7.2],
+    "Sagittarius": [8, 7.3, (8.44,0.22,0.21), 9.3, (7.69, 0.43, 0.47), 8.8],
+    "Sequoia_K19": [7.7, (7.9,0.11,0.11), (7.74, 0.42, 0.46), 7.2],
+    "Sequoia_M19": [7.7, (7.9,0.11,0.11), (7.74, 0.42, 0.46), 7.2],
+    "Sequoia_N20": [7.7, (7.9,0.11,0.11), (7.74, 0.42, 0.46), 7.2],
     "Thamnos": [6.7, (5,6.7)]
 }
 
@@ -632,16 +632,15 @@ plot_feature_relation(feature="E_plot",
 ##############################################################################
 
 # Load dataframes with FeH and MgFe abundances for the progenitors in the simulations
-prog_FeH_dict = pickle.load(open("/mnt/aridata1/users/ariasant/MW-sbi/auriga_prog_FeH.pkl", "rb"))
-prog_MgFe_dict = pickle.load(open("/mnt/aridata1/users/ariasant/MW-sbi/auriga_prog_MgFe.pkl", "rb"))
-prog_Mstar_dict = pickle.load(open("/mnt/aridata1/users/ariasant/MW-sbi/auriga_prog_stellar_mass.pkl", "rb"))
+prog_FeH_dict = pickle.load(open(f"{posterior_samples_dir}FeH_dict.pkl", "rb"))
+prog_Mstar_dict = pickle.load(open(f"{posterior_samples_dir}stellar_mass_dict.pkl", "rb"))
 
 
 fig, ax = plt.subplots()
 
 for progID,Mstar in prog_Mstar_dict.items():
     
-    median_FeH = np.percentile(prog_FeH_dict[progID]-0.2, 50)  
+    median_FeH = prog_FeH_dict[progID] 
     ax.scatter(Mstar, 
                median_FeH,
                s=1,
@@ -684,10 +683,10 @@ for substructure in substructures:
 ax.set_xlabel('log($M_{*}/M_{\odot}$)')
 ax.set_ylabel('[Fe/H]')
 
-ax.set_ylim([-2.5,0])
-ax.set_xlim([6,10.4])
+ax.set_ylim([-2.5,-0.5])
+ax.set_xlim([6.4,10.4])
 
-ax.set_aspect((4.4/2.5)*0.5)
+ax.set_aspect((4/2)*0.5)
 fig.savefig(f"{output_dir}MZR.pdf", dpi=400)
 
 
@@ -828,7 +827,7 @@ fig.savefig(f"{output_dir}MW_mass_assembly_vs_auriga_all_substructures.pdf", dpi
 
 fig, ax = plt.subplots(1,1, figsize=(8,6))
 xlim = [0.2,13.8]
-ylim = [-0.5,20]
+ylim = [-0.5,90]
 ax.set_xlim(xlim)
 ax.set_ylim(ylim)
 
@@ -883,10 +882,11 @@ ax.scatter(infall_time,
 ax.fill_between([0,14],
                 10,
                 18,
-                alpha=0.1,
-                color="k"
+                alpha=0.5,
+                color="k",
+                label="MW stellar halo (Deason+19)"
                )
-ax.plot([0,14],
+"""ax.plot([0,14],
         [10,10],
         lw=0.5,
         ls="-",
@@ -897,18 +897,19 @@ ax.plot([0,14],
         lw=0.5,
         ls="-",
         color="k"
-       )
+       )"""
 
-ax.text(0.5,16,s="MW stellar halo (Deason+19)", fontsize=12)
+#ax.text(0.5,16,s="MW stellar halo (Deason+19)", fontsize=12)
 ####
 
 ax.fill_between([0,14],
                 8,
                 11.1,
-                alpha=0.1,
-                color="b"
+                alpha=0.5,
+                color="b",
+                label="MW accreted stellar halo\n (Mackereth&Bovy23)"
                )
-ax.plot([0,14],
+"""ax.plot([0,14],
         [8,8],
         lw=0.5,
         ls="-",
@@ -919,10 +920,10 @@ ax.plot([0,14],
         lw=0.5,
         ls="-",
         color="b"
-       )
+       )"""
 
-ax.text(0.5,5.,s="MW accreted stellar halo\n (Mackereth&Bovy23)", fontsize=12, color="b")
-ax.legend(bbox_to_anchor=(0.38,0.6), fontsize=12, frameon=False)
+#ax.text(0.5,5.,s="MW accreted stellar halo\n (Mackereth&Bovy23)", fontsize=12, color="b")
+ax.legend(loc="upper left", fontsize=12, frameon=False)
 
 fig.savefig(f"{output_dir}MW_mass_accreted_mass_all_substructures.pdf", dpi=400)
 
@@ -1072,9 +1073,10 @@ fig.savefig(f"{output_dir}MW_mass_assembly_vs_auriga_naidu_split.pdf", dpi=400)
 ############################################################
 ############################################################
 
+
 fig, ax = plt.subplots(1,1, figsize=(8,6))
 xlim = [0.2,13.8]
-ylim = [-0.5,20]
+ylim = [-0.5,90]
 ax.set_xlim(xlim)
 ax.set_ylim(ylim)
 
@@ -1129,45 +1131,21 @@ ax.scatter(infall_time,
 ax.fill_between([0,14],
                 10,
                 18,
-                alpha=0.1,
-                color="k"
+                alpha=0.5,
+                color="k",
+                label="MW stellar halo (Deason+19)"
                )
-ax.plot([0,14],
-        [10,10],
-        lw=0.5,
-        ls="-",
-        color="k"
-       )
-ax.plot([0,14],
-        [18,18],
-        lw=0.5,
-        ls="-",
-        color="k"
-       )
 
-ax.text(0.5,16,s="MW stellar halo (Deason+19)", fontsize=12)
 ####
 
 ax.fill_between([0,14],
                 8,
                 11.1,
-                alpha=0.1,
-                color="b"
+                alpha=0.5,
+                color="b",
+                label="MW accreted stellar halo\n (Mackereth&Bovy23)"
                )
-ax.plot([0,14],
-        [8,8],
-        lw=0.5,
-        ls="-",
-        color="b"
-       )
-ax.plot([0,14],
-        [11.1,11.1],
-        lw=0.5,
-        ls="-",
-        color="b"
-       )
 
-ax.text(0.5,5.,s="MW accreted stellar halo\n (Mackereth&Bovy23)", fontsize=12, color="b")
-ax.legend(bbox_to_anchor=(0.88,0.6), fontsize=12, frameon=False)
+ax.legend(loc="upper left", fontsize=12, frameon=False)
 
 fig.savefig(f"{output_dir}MW_mass_accreted_mass_naidu_split.pdf", dpi=400)

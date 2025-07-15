@@ -1,20 +1,29 @@
+from ili.dataloaders import TorchLoader
+from ili.utils import Uniform, load_nde_lampe
+from ili.inference import InferenceRunner
 import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import math
 import numpy as np
+import optuna
+import os
 import pandas as pd
 import pickle
 from sklearn.model_selection import train_test_split
 import time
+import torch
 
 import sys
 sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
 import fishnets
+import optuna_opt
 import sbi_results
 import sbi_training
 
 
 # Load training and test data
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 features = ["E","L","FeH","MgFe"]
@@ -61,6 +70,7 @@ print(f"X_train shape: {X_train.shape}", flush=True)
 print(f"Y_train shape: {Y_train.shape}", flush=True)
 print(f"X_test shape: {X_test.shape}", flush=True)
 print(f"Y_test shape: {Y_test.shape}", flush=True)
+
     
 
 ####################################################################################
@@ -69,12 +79,35 @@ print(f"Y_test shape: {Y_test.shape}", flush=True)
 ####################################################################################
 ####################################################################################
 
+if os.path.exists("/mnt/aridata1/users/ariasant/MW-sbi/optuna_study/hyperparameters_search.db"):
+    # Load exististing study
+    study = optuna.load_study(study_name="ltu_ili_npe_tarp_study",
+                              storage="sqlite:////mnt/aridata1/users/ariasant/MW-sbi/optuna_study/hyperparameters_search.db")
+    params = study.best_trials[0].params
+
+else:
+    # Run hyperparameter tuning 
+    params = optuna_opt.hyperparameter_search(X_train=X_train,
+                                              Y_train=Y_train,
+                                              X_test=X_test,
+                                              Y_test=Y_test,
+                                              scaler_params=scaler_params)
+    
+fishnet_params = {
+        "n_hidden_layers": params["hidden_layers_fish"],
+        "n_nodes_per_layer": params["nodes_per_layer_fish"]
+    }
+npe_params = {
+    "model": params["model"],
+    "hidden_features": params["hidden_features"],
+    "num_transforms": params["num_transforms"]
+}
+
 # Learn data compression model with fishnet
 compression_model = fishnets.FISHNET(n_params=4,
                                      n_d=100,
                                      n_features=len(features),
-                                     n_hidden_layers=5,
-                                     n_nodes_per_layer=256)
+                                     **fishnet_params)
 
 # Train the compression model
 print("Training compression model...", flush=True)
@@ -121,13 +154,66 @@ summary_stats_test, _, __ = compression_model(X_test)
 # Update the test dictionary with the compressed data
 test_dictionary["X"] = summary_stats_test
 
-# Train NDE model
-posterior_model = sbi_training.NPE_training(X_train=summary_stats,
-                                        Y_train=Y_train,
-                                        prior_ranges=[scaler_params.transform(np.array([0,6,8,-3])[None,:] )[0],
-                                                      scaler_params.transform(np.array([14,11,12,0])[None,:] )[0]],
-                                        filename=filename,
-                                        output_dir=output_dir)
+
+
+# Define prior
+prior = Uniform(low=scaler_params.transform(np.array([0,6,8,-3])[None,:] )[0],
+                high=scaler_params.transform(np.array([14,11,12,0])[None,:] )[0],
+                device=device)
+
+
+train_args = dict(
+    training_batch_size=256,
+    learning_rate=1e-4,
+)
+
+# Define NPE model
+nets = [load_nde_lampe(**npe_params,
+        x_normalize=False,
+        device=device,
+) for i in range(3)]
+
+
+runner = InferenceRunner.load(
+    backend="lampe",
+    engine="NPE",
+    prior=prior,
+    nets=nets,
+    device=device,
+    train_args=train_args,
+)
+
+# Train NPE
+# Use fixed train/test split defined outside objective
+train_loader = torch.utils.data.DataLoader(
+    torch.utils.data.TensorDataset(torch.from_numpy(summary_stats).float(), torch.from_numpy(Y_train).float()),
+    batch_size=256, shuffle=True
+)
+val_loader = torch.utils.data.DataLoader(
+    torch.utils.data.TensorDataset(torch.from_numpy(summary_stats_test).float(), torch.from_numpy(Y_test).float()),
+    batch_size=256, shuffle=False
+)
+loader = TorchLoader(train_loader=train_loader, val_loader=val_loader)
+
+
+posterior_model, summaries = runner(loader=loader)
+
+# Plot train/validation loss
+fig, ax = plt.subplots(1, 1, figsize=(6,4))
+c = list(mcolors.TABLEAU_COLORS)
+for i, m in enumerate(summaries):
+    ax.plot(m['training_log_probs'], ls='-', label=f"{i}_train", c=c[i])
+    ax.plot(m['validation_log_probs'], ls='--', label=f"{i}_val", c=c[i])
+ax.set_xlim(0)
+ax.set_xlabel('Epoch')
+ax.set_ylabel('Log probability')
+ax.set_ylim([-10,10])
+ax.legend()
+fig.savefig(output_dir+f'{filename}_training_plot.png', dpi=400)
+
+# Save posterior
+pickle.dump(posterior_model, 
+            open(f'{output_dir}{filename}.pkl', 'wb'))
 
 
 ####################################################################################

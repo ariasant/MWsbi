@@ -121,7 +121,7 @@ def validation(posterior_ensemble,
                                             torch.Tensor(X_obs).to(device)
                                             )
         # calculate the log_prob for each sample
-        log_prob = posterior_ensemble.log_prob(samples, torch.Tensor(X_obs).to(device), norm_posterior=False)
+        log_prob = posterior_ensemble.log_prob(samples, torch.Tensor(X_obs).to(device))
 
         test_samples[progID] = (samples.cpu().numpy(), 
                                 log_prob.cpu().numpy(),

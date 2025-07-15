@@ -190,7 +190,7 @@ obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_fl
 # Match covariance matrices with coral
 coral_model = CORAL()
 sim_data[features] = coral_model.fit_transform(Xs=sim_data[features].values, 
-                                               Xt=obs_data.loc[obs_accreted,features])
+                                               Xt=obs_data.loc[obs_accreted,features].values)
 
 # Plot data after processing
 fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]], 
@@ -219,6 +219,16 @@ for substructure in substructures:
                           RANGE=[(-3,3), (-3, 3), (-3, 3), (-3, 3)])
     fig.savefig(f"{output_dir}transformed_data_{filename}_shifted_{substructure}.pdf", dpi=300, bbox_inches='tight')"""
 
+# Save FeH and stellar mass of processed data for plots
+FeH_dict, stellar_mass_dict = {}, {}
+for ID in sim_data["progID"].unique():
+    df = sim_data[sim_data["progID"]==ID]
+    df[features] = data_scaler.inverse_transform(df[features].values)
+    FeH_dict[ID] = df["FeH"].median()
+    stellar_mass_dict[ID] = df["log_Mprog_stellar"].median()
+
+pickle.dump(FeH_dict, open(f"{output_dir}FeH_dict.pkl", "wb"))
+pickle.dump(stellar_mass_dict, open(f"{output_dir}stellar_mass_dict.pkl", "wb"))
 
 # Plot merger parameters
 fig = corner.corner(sim_data[parameters].values,

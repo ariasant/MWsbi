@@ -1,6 +1,7 @@
 import corner
 import math
 import numpy as np
+import optuna
 import pandas as pd
 import pickle
 import torch
@@ -25,12 +26,21 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'log($M/M_{\odot}$)', 
              'MMR (log)']
 
+# Load the hyperaparameters for the compression model
+# Load exististing study
+study = optuna.load_study(study_name="ltu_ili_npe_tarp_study",
+                            storage="sqlite:////mnt/aridata1/users/ariasant/MW-sbi/optuna_study/hyperparameters_search.db")
+params = study.best_trials[0].params
+fishnet_params = {
+        "n_hidden_layers": params["hidden_layers_fish"],
+        "n_nodes_per_layer": params["nodes_per_layer_fish"]
+    }
+
 # Compression model
 compression_model = fishnets.FISHNET(n_params=4,
                                      n_d=100,
                                      n_features=len(features),
-                                     n_hidden_layers=5,
-                                     n_nodes_per_layer=256)
+                                     **fishnet_params)
 # Load trained weights
 w = pickle.load(open(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl","rb")) 
 compression_model.w = w
