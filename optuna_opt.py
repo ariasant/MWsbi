@@ -7,16 +7,42 @@ from ili.utils import Uniform, load_nde_lampe
 from ili.inference import InferenceRunner
 from ili.validation.metrics import PosteriorSamples
 import tarp
+import torch
+from torch.utils.data import Dataset
+import jax
+import jax.numpy as jnp
+from my_func import *
 
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def hyperparameter_search(X_train: np.array,
                           Y_train: np.array,
                           X_test: np.array,
                           Y_test: np.array,
-                          scaler_params):
+                          scaler_params,
+                          study_dir,
+                          runner,
+                          compression_model,
+                          train_noise_epochs, #fishnet
+                          val_noise_epochs,   #fishnet
+                          train_noise_list, #npe
+                          val_noise_list    #npe
+):
     
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    batch_size=256
+    
+    train_ds = NoisyDataset(initial_data=(torch.from_numpy(X_train).float().to(device), torch.from_numpy(Y_train).float().to(device)),
+                                noise=torch.from_numpy(train_noise_list[0]).to(device),
+                                compression_model=compression_model)
+    val_ds = NoisyDataset(initial_data=(torch.from_numpy(X_test).float().to(device), torch.from_numpy(Y_test).float().to(device)),
+                              noise=torch.from_numpy(val_noise_list[0]).to(device),
+                              compression_model=compression_model)
+
+    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    val_loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+
+    loader = TorchLoader(train_loader=train_loader, val_loader=val_loader)
 
 
     # Define prior
@@ -26,15 +52,16 @@ def hyperparameter_search(X_train: np.array,
 
 
     train_args = dict(
-        training_batch_size=256,
+        training_batch_size=batch_size,
         learning_rate=1e-4,
         stop_after_epochs=15,
-        max_epochs=100
+        max_epochs=100,
+        clip_max_norm=5
     )
 
 
     # Create optuna study
-    storage = optuna.storages.RDBStorage(url="sqlite:////mnt/aridata1/users/ariasant/MW-sbi/optuna_study/hyperparameters_search.db", 
+    storage = optuna.storages.RDBStorage(url=f"sqlite:///{study_dir}", 
                                          engine_kwargs={"connect_args": {"timeout": 300}})
     
     study = optuna.create_study(directions=["maximize", "minimize"],
@@ -42,6 +69,8 @@ def hyperparameter_search(X_train: np.array,
                                 load_if_exists=True,
                                 sampler=optuna.samplers.TPESampler(seed=42),
                                 study_name="ltu_ili_npe_tarp_study")
+
+    
     
     # Define objective function
 
@@ -49,13 +78,14 @@ def hyperparameter_search(X_train: np.array,
                   X_train=X_train,
                   Y_train=Y_train,
                   X_test=X_test,
-                  Y_test=Y_test):
+                  Y_test=Y_test
+    ):
         # Sample hyperparameters for fishnet
         hidden_layers_fish = trial.suggest_int("hidden_layers_fish", 1, 10)
         nodes_per_layer_fish = trial.suggest_int("nodes_per_layer_fish", 10, 500)
 
         # Sample hyperparameters NPE
-        model = trial.suggest_categorical("model", ["nsf", "maf", "gf"])
+        model = trial.suggest_categorical("model", ["nsf", "maf"])
         hidden_features = trial.suggest_int("hidden_features", 10, 500)
         num_transforms = trial.suggest_int("num_transforms", 5, 20)
 
@@ -68,44 +98,39 @@ def hyperparameter_search(X_train: np.array,
         
         training_results = compression_model.train(data_=X_train,
                                             theta_=Y_train,
-                                            batch_size=256,
+                                            val_data_=X_test,
+                                            val_theta_=Y_test,       
+                                            train_noise_epochs=train_noise_epochs,
+                                            val_noise_epochs=val_noise_epochs,
+                                            batch_size=batch_size,
                                             lr=1e-4,
                                             epochs=500)
         
         # Define NPE model
-        nets = [load_nde_lampe(
+        nets = load_nde_lampe(
                 model=model,
                 hidden_features=hidden_features,
                 num_transforms=num_transforms,
                 x_normalize=False,
+                theta_normalize=False,
                 device=device,
-        )]
-
-
-        runner = InferenceRunner.load(
-            backend="lampe",
-            engine="NPE",
-            prior=prior,
-            nets=nets,
-            device=device,
-            train_args=train_args,
         )
+
+
+        runner=my_runner(train_noise_list=train_noise_list,
+                         val_noise_list=val_noise_list,
+                         prior=prior,
+                         nets=nets,
+                         device=device)
+
+        # Update compression model in datasets fed to NPE
+        for data_loader in [train_loader, val_loader]:
+            data_loader.dataset.compression_model = compression_model
+
+        loader = TorchLoader(train_loader=train_loader, val_loader=val_loader)
+        
 
         # Train NPE
-        # Use fixed train/test split defined outside objective
-        X_train, _, _ = compression_model(X_train)
-        X_test, _, _ = compression_model(X_test)
-        train_loader = torch.utils.data.DataLoader(
-            torch.utils.data.TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(Y_train).float()),
-            batch_size=256, shuffle=True
-        )
-        val_loader = torch.utils.data.DataLoader(
-            torch.utils.data.TensorDataset(torch.from_numpy(X_test).float(), torch.from_numpy(Y_test).float()),
-            batch_size=256, shuffle=False
-        )
-        loader = TorchLoader(train_loader=train_loader, val_loader=val_loader)
-
-
         posterior, summaries = runner(loader=loader)
 
         # Evaluate log probability and TARP curve for validation data
@@ -120,10 +145,14 @@ def hyperparameter_search(X_train: np.array,
         tarp_val = torch.mean(torch.from_numpy(
             ecp[:, ecp.shape[1] // 2])).to(device)
 
-        return summaries[0]['validation_log_probs'][-1], abs(tarp_val - 0.5)
+        log_p = summaries[0]['validation_log_probs'][-1]
+
+        log_p = -100 if np.isinf(log_p) else log_p
+
+        return log_p,abs(tarp_val - 0.5)
 
     # Run the study
-    study.optimize(objective, n_trials=300, timeout=1800)
+    study.optimize(objective, n_trials=100, timeout=1800)
 
     # Save study
 

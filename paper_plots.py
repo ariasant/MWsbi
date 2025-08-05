@@ -9,8 +9,8 @@ from scipy.stats import binned_statistic
 
 
 
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/paper_plots/"
-posterior_samples_dir ="/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/"
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shifts_marg/paper_plots/"
+posterior_samples_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shifts_marg/'
 
 
 # Declare plot formatting

@@ -1,4 +1,3 @@
-
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
@@ -7,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optax
 import pickle
+import pymc as pm
 import tensorflow_probability.substrates.jax as tfp
 from tqdm import tqdm
 from typing import Sequence, Any, Callable
@@ -15,6 +15,8 @@ Array = Any
 
 # Print JAX device
 print(jax.devices(), flush=True)
+
+
 
 def fill_triangular(x):
     m = x.shape[0] # should be n * (n+1) / 2
@@ -124,6 +126,8 @@ class FISHNET():
               theta_: np.ndarray,
               val_data_: np.ndarray = None,
               val_theta_: np.ndarray = None,
+              train_noise_epochs: np.ndarray = None,
+              val_noise_epochs: np.ndarray = None,
               lr: float = 1e-4,
               batch_size: int = 200,
               epochs: int = 3000,
@@ -133,14 +137,20 @@ class FISHNET():
         # Convert data to JAX arrays
         data_ = jnp.array(data_)
         theta_ = jnp.array(theta_)
+        val_noise_epochs = jnp.array(val_noise_epochs)
+        train_noise_epochs = jnp.array(train_noise_epochs)
 
 
         if val_data_ is not None:
             val_data_ = jnp.array(val_data_)
-            val_data_.reshape(-1, val_data_.shape[0], self.n_d, self.n_features)
-        if val_theta_ is not None:
             val_theta_ = jnp.array(val_theta_)
-            val_theta_.reshape(-1, val_data_.shape[0], self.n_params)
+            # Shuffle
+            key = jax.random.PRNGKey(9900)
+            # Select a number of training examples which is divisible by the batch size
+            n_val = (val_data_.shape[0]//batch_size)*batch_size
+            # shuffle data 
+            val_randidx = jax.random.permutation(key, jnp.arange(val_theta_.reshape(-1, self.n_params).shape[0]), independent=True)[:n_val]
+           
 
 
         # Initialise loss function
@@ -184,9 +194,22 @@ class FISHNET():
 
         pbar = tqdm(range(epochs), leave=True, position=0)
 
+        print("Start training", flush=True)
+        n_noise_epochs = train_noise_epochs.shape[0]
         for j in pbar:
             
             key,rng = jax.random.split(key)
+
+            _data = data_ + train_noise_epochs[j%n_noise_epochs]
+            _val_data = val_data_ + val_noise_epochs[j%n_noise_epochs]
+
+            # Scale data
+            mu_data = jnp.mean(_data)
+            std_data = jnp.std(_data)
+
+            _data = ( _data - mu_data ) / std_data
+            _val_data = ( _val_data - mu_data ) / std_data
+
 
             # Select a number of training examples which is divisible by the batch size
             n_train = (data_.shape[0]//batch_size)*batch_size
@@ -195,7 +218,7 @@ class FISHNET():
             randidx = jax.random.permutation(key, jnp.arange(theta_.reshape(-1, self.n_params).shape[0]), independent=True)[:n_train]
             
             _data = data_.reshape(-1, self.n_d, self.n_features)[randidx].reshape(batch_size, -1, self.n_d, self.n_features)
-            _theta = theta_.reshape(-1, self.n_params)[randidx].reshape(batch_size, -1, self.n_params)
+            _theta = theta_.reshape(-1, self.n_params)[randidx].reshape(batch_size, -1, self.n_params)            
 
             inits = (self.w, loss_val, opt_state, _data, _theta)
 
@@ -208,8 +231,15 @@ class FISHNET():
             losses = losses.at[j].set(loss_val)
 
             if val_data_ is not None and val_theta_ is not None:
+
+                _val_data = val_data_.reshape(-1, self.n_d, self.n_features)[val_randidx].reshape(batch_size, -1, self.n_d, self.n_features)
+                _val_theta = val_theta_.reshape(-1, self.n_params)[val_randidx].reshape(batch_size, -1, self.n_params)
+                
+                _val_data = _val_data.reshape(-1, _val_data.shape[2], _val_data.shape[3])
+                _val_theta = _val_theta.reshape(-1, _val_theta.shape[-1])
+
                 # calculate validation loss
-                val_loss = kl_loss(self.w, val_data_, val_theta_)
+                val_loss = kl_loss(self.w, _val_data, _val_theta)
                 val_losses = val_losses.at[j].set(val_loss)
                 pbar.set_description('epoch %d loss: %.5f val_loss: %.5f'%(j, loss_val, val_loss))
             else:

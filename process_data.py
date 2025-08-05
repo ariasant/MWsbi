@@ -1,4 +1,3 @@
-from adapt.feature_based import CORAL
 import corner
 import matplotlib as mpl
 import numpy as np
@@ -56,11 +55,15 @@ def call_plotting_formatting():
 
 call_plotting_formatting()
 
-
 def plot_stars_data(dfs: list, RANGE=None):
 
     # Initialize color list for the different dataframes
     colors = [mpl.cm.tab10(i/len(dfs)) for i in range(len(dfs))]
+
+    if RANGE is None:
+        dfs_all = pd.concat(dfs)
+        RANGE = [(dfs_all[f].quantile(0.01), dfs_all[f].quantile(0.99))
+                 for f in features]
 
     for i, df in enumerate(dfs):
 
@@ -96,7 +99,7 @@ def plot_stars_data(dfs: list, RANGE=None):
 features = ['E', 'L', 'FeH', 'MgFe']
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shifts_marg/'
 
 print(f"output_dir: {output_dir}", flush=True)
 
@@ -141,13 +144,6 @@ for file in os.listdir(data_dir):
 
 sim_data = pd.concat(sim_data, ignore_index=True)
 
-# Load sample of accreted stars similarly distributed in simulations
-sim_df_accreted = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/disc_plots/sim_df_accreted.pkl")
-sim_df_accreted = sim_df_accreted[(sim_df_accreted["L"]>0)]
-
-# Rank matching simulations to MW stars
-#sim_data = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/sim_match2_obs/sim_data.pkl")
-
 
 # Plot initial data
 fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]])
@@ -161,40 +157,17 @@ sim_data["L"] = np.log(sim_data["L"].values)
 obs_data["E"] = np.log(-obs_data["E"].values)
 obs_data["L"] = np.log(obs_data["L"].values)
 
-sim_df_accreted["E"] = np.log(-sim_df_accreted["E"].values)
-sim_df_accreted["L"] = np.log(sim_df_accreted["L"].values)
+#sim_data["MgFe"] = sim_data["MgFe"].values + 0.4
 
-# Match the mean of feature distribution to the target ones
-mean_shifts=sim_df_accreted[features].mean().values - obs_data.loc[obs_accreted,features].mean().values
-#mean_shifts[2]=0.4
-#mean_shifts[3]=-0.4
+# Centre data to the simulation mean
+#mu_vector = sim_data[features].mean()
+#std_vector = sim_data[features].std()
 
-sim_data[features] = sim_data[features] - mean_shifts
-
-
-# Scale data to 0 mean and 1 std
-data_scaler = RobustScaler()
-data_scaler.fit(obs_data.loc[obs_accreted,features].values)
-sim_data[features] = data_scaler.transform(sim_data[features].values)
-obs_data[features] = data_scaler.transform(obs_data[features].values)
-
-# Remove outliers
-sim_data = sim_data[np.logical_and.reduce([sim_data[feature]**2 < 5**2 for feature in features])]
-obs_data = obs_data[np.logical_and.reduce([obs_data[feature]**2 < 5**2 for feature in features])]
-
-obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
-               ((obs_data.AlFe>=-0.07) & (obs_data.MgMn>=4.25*obs_data.AlFe+0.5475))
-obs_accreted = np.logical_or.reduce([obs_accreted]+[obs_data[f"{substructure}_flag"]==1 
-                                    for substructure in substructures])
-
-# Match covariance matrices with coral
-coral_model = CORAL()
-sim_data[features] = coral_model.fit_transform(Xs=sim_data[features].values, 
-                                               Xt=obs_data.loc[obs_accreted,features].values)
+#sim_data[features] = (sim_data[features].values - mu_vector) / std_vector
+#obs_data[features] = (obs_data[features].values - mu_vector) / std_vector
 
 # Plot data after processing
-fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]], 
-                      RANGE=[(-4,4), (-4,4), (-4,4), (-4,4)])
+fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]])
 # Add legend
 labels = ["Auriga", "APOGEE", "APOGEE (accreted)"]
 colors = [mpl.cm.tab10(i/3) for i in range(3)]
@@ -211,24 +184,6 @@ mpl.pyplot.legend(
         )
 fig.savefig(f"{output_dir}transformed_data_{filename}.pdf", dpi=300, bbox_inches='tight')
 
-"""# Plot the stars in each substructure
-print("Counting stars in each substructure of the MW before and after removing outliers:", flush=True)
-for substructure in substructures:
-    # Plot the stars in each substructure
-    fig = plot_stars_data([sim_data, obs_data[obs_data[f"{substructure}_flag"]==1]],
-                          RANGE=[(-3,3), (-3, 3), (-3, 3), (-3, 3)])
-    fig.savefig(f"{output_dir}transformed_data_{filename}_shifted_{substructure}.pdf", dpi=300, bbox_inches='tight')"""
-
-# Save FeH and stellar mass of processed data for plots
-FeH_dict, stellar_mass_dict = {}, {}
-for ID in sim_data["progID"].unique():
-    df = sim_data[sim_data["progID"]==ID]
-    df[features] = data_scaler.inverse_transform(df[features].values)
-    FeH_dict[ID] = df["FeH"].median()
-    stellar_mass_dict[ID] = df["log_Mprog_stellar"].median()
-
-pickle.dump(FeH_dict, open(f"{output_dir}FeH_dict.pkl", "wb"))
-pickle.dump(stellar_mass_dict, open(f"{output_dir}stellar_mass_dict.pkl", "wb"))
 
 # Plot merger parameters
 fig = corner.corner(sim_data[parameters].values,
@@ -249,7 +204,6 @@ sim_data[parameters] = scaler_params.fit_transform(sim_data[parameters].values)
 
 
 # Save scalers for future analysis
-pickle.dump(data_scaler,open(f"{output_dir}/data/data_scaler_{filename}.pkl","wb"))
 pickle.dump(scaler_params,open(f"{output_dir}/data/theta_scaler_{filename}.pkl","wb"))
 # Save processed simulation data
 sim_data.to_pickle(f"{output_dir}/data/sim_ds_processed_{filename}.pkl")

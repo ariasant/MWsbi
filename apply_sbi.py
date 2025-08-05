@@ -10,8 +10,9 @@ import sys
 sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
 import fishnets
 
-model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/"
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/coral/"
+model_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shifts_marg/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shifts_marg/'
+study_path = f"{output_dir}optuna_study/hyperparameters_search.db"
 
 features=["E","L","FeH","MgFe"]
 
@@ -29,7 +30,7 @@ plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
 # Load the hyperaparameters for the compression model
 # Load exististing study
 study = optuna.load_study(study_name="ltu_ili_npe_tarp_study",
-                            storage="sqlite:////mnt/aridata1/users/ariasant/MW-sbi/optuna_study/hyperparameters_search.db")
+                              storage=f"sqlite:///{study_path}")
 params = study.best_trials[0].params
 fishnet_params = {
         "n_hidden_layers": params["hidden_layers_fish"],
@@ -47,6 +48,10 @@ compression_model.w = w
 
 # Load pre-processed apogee sample
 df = pd.read_pickle(f"{model_dir}data/apogee_ds_processed_Suite_ELFeHMgFe.pkl")
+
+# Scale dataframe
+df[features] = ( df[features] - df[features].mean() ) / df[features].std()
+
 
 substructures = ['Arjuna', 'GES', 'Sagittarius', 'Helmi',
        'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
