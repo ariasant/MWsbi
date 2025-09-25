@@ -8,6 +8,10 @@ import pickle
 from sklearn.neighbors import NearestNeighbors
 import torch
 
+import sys
+sys.path.append("/mnt/aridata1/users/ariasant/MW-sbi/")
+import fishnets
+
 def plot_ax(x,y,
             ax,
             bin_number=500,
@@ -41,16 +45,8 @@ def plot_ax(x,y,
 
 
 
-CLI = argparse.ArgumentParser()
-CLI.add_argument(
-        "--model_dir",
-        type=str,
-        default="/mnt/aridata1/users/ariasant/MW-sbi/simple_shift/with_satellites/"
-    )
-
-args = CLI.parse_args()
-model_dir = args.model_dir
-output_dir = args.model_dir
+model_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/"
 
 features=["E","L","FeH","MgFe"]
 
@@ -61,6 +57,16 @@ posterior = pickle.load(open(f"{model_dir}Suite_ELFeHMgFe.pkl","rb"))
 
 # Data processing tools
 theta_scaler = pickle.load(open(f"{model_dir}theta_scaler_Suite_ELFeHMgFe.pkl","rb")) # progenitor properties scaler
+
+# Compression model
+compression_model = fishnets.FISHNET(n_params=4,
+                                     n_d=100,
+                                     n_features=len(features),
+                                     n_hidden_layers=2,
+                                     n_nodes_per_layer=256)
+# Load trained weights
+w = pickle.load(open(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl","rb")) 
+compression_model.w = w
 
 plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
              'log($M_{*}/M_{\odot}$)',
@@ -136,7 +142,10 @@ group_properties = []
 
 for idx in idx_neighbours:
 
-    NN_data = df.iloc[idx][features].values.reshape(-1)
+    NN_data = df.iloc[idx][features].values
+
+    # Compress data points
+    NN_data, _, __ = compression_model(NN_data)
 
     # Sample 1000 times from the posterior conditioned on the nearest-neighbours
     theta_samples = posterior.sample((n_samples,), 
