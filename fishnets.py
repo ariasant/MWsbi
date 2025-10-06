@@ -16,6 +16,9 @@ Array = Any
 # Print JAX device
 print(jax.devices(), flush=True)
 
+import os
+os.environ['TF_GPU_ALLOCATOR'] = "cuda_malloc_async"
+
 
 
 def fill_triangular(x):
@@ -126,8 +129,9 @@ class FISHNET():
               theta_: np.ndarray,
               val_data_: np.ndarray = None,
               val_theta_: np.ndarray = None,
-              train_noise_epochs: np.ndarray = None,
-              val_noise_epochs: np.ndarray = None,
+              noise_list: np.ndarray = None,
+              obs_noise_list: np.array = None,
+              data_scaler = None,
               lr: float = 1e-4,
               batch_size: int = 200,
               epochs: int = 3000,
@@ -135,15 +139,18 @@ class FISHNET():
               ):
         
         # Convert data to JAX arrays
-        data_ = jnp.array(data_)
-        theta_ = jnp.array(theta_)
-        val_noise_epochs = jnp.array(val_noise_epochs)
-        train_noise_epochs = jnp.array(train_noise_epochs)
+        data_ = data_
+        theta_ = theta_
+        noise_list = noise_list
+        obs_noise_list = obs_noise_list
 
 
         if val_data_ is not None:
             val_data_ = jnp.array(val_data_)
             val_theta_ = jnp.array(val_theta_)
+
+            # Scale data
+            val_data_ = data_scaler.transform(val_data_.reshape(-1,self.n_features)).reshape(-1,100,self.n_features)
             # Shuffle
             key = jax.random.PRNGKey(9900)
             # Select a number of training examples which is divisible by the batch size
@@ -195,29 +202,43 @@ class FISHNET():
         pbar = tqdm(range(epochs), leave=True, position=0)
 
         print("Start training", flush=True)
-        n_noise_epochs = train_noise_epochs.shape[0]
+        n_cal_noise = noise_list.shape[0]
+        n_obs_noise = obs_noise_list.shape[0]
+        n_data = data_.shape[0]
+
+        # Create a different noise configuration each epoch
+        key_noise = jax.random.PRNGKey(998)
+        # See which progenitors to consider with the alternative potenital model
+        cal_noise_idx = jax.random.randint(key_noise, 
+                                           shape=(epochs,n_data), 
+                                           minval=0, maxval=n_cal_noise)
+        obs_noise_idx = jax.random.randint(key_noise+12, 
+                                           shape=(epochs,n_data*100), 
+                                           minval=0, maxval=n_obs_noise)
+
         for j in pbar:
             
-            key,rng = jax.random.split(key)
-
-            _data = data_ + train_noise_epochs[j%n_noise_epochs]
-            _val_data = val_data_ + val_noise_epochs[j%n_noise_epochs]
+            # Add calibration deviations
+            _data = data_ + noise_list[cal_noise_idx[j]]
+            # Add observation noise
+            _data = _data.reshape(-1,self.n_features) + obs_noise_list[obs_noise_idx[j]]
 
             # Scale data
-            mu_data = jnp.mean(_data)
-            std_data = jnp.std(_data)
+            _data = data_scaler.transform(_data) 
+            
+            # Reshape data into the progenitor groups
+            _data = _data.reshape(-1,100,self.n_features)
 
-            _data = ( _data - mu_data ) / std_data
-            _val_data = ( _val_data - mu_data ) / std_data
-
+            _data = jnp.array(_data)
 
             # Select a number of training examples which is divisible by the batch size
-            n_train = (data_.shape[0]//batch_size)*batch_size
+            n_train = (_data.shape[0]//batch_size)*batch_size
 
             # shuffle data every epoch
+            key,rng = jax.random.split(key)
             randidx = jax.random.permutation(key, jnp.arange(theta_.reshape(-1, self.n_params).shape[0]), independent=True)[:n_train]
             
-            _data = data_.reshape(-1, self.n_d, self.n_features)[randidx].reshape(batch_size, -1, self.n_d, self.n_features)
+            _data = _data.reshape(-1, self.n_d, self.n_features)[randidx].reshape(batch_size, -1, self.n_d, self.n_features)
             _theta = theta_.reshape(-1, self.n_params)[randidx].reshape(batch_size, -1, self.n_params)            
 
             inits = (self.w, loss_val, opt_state, _data, _theta)

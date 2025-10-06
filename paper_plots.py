@@ -7,10 +7,13 @@ import pandas as pd
 import pickle
 from scipy.stats import binned_statistic
 
+# Convert infall times from Gyr to redshift
+import astropy.units as u
+from astropy.cosmology import Planck15, z_at_value
 
 
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shifts_marg/paper_plots/"
-posterior_samples_dir = '/mnt/aridata1/users/ariasant/MW-sbi/fishnet_results/shifts_marg/'
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/trials4/paper_plots/"
+posterior_samples_dir = "/mnt/aridata1/users/ariasant/MW-sbi/trials4/"
 
 
 # Declare plot formatting
@@ -630,24 +633,107 @@ plot_feature_relation(feature="E_plot",
                      )
 
 ##############################################################################
+import pymc as pm
+def generate_mean_cov_model(features, 
+                            n_stars_per_prog):
 
-# Load dataframes with FeH and MgFe abundances for the progenitors in the simulations
-prog_FeH_dict = pickle.load(open(f"{posterior_samples_dir}FeH_dict.pkl", "rb"))
-prog_Mstar_dict = pickle.load(open(f"{posterior_samples_dir}stellar_mass_dict.pkl", "rb"))
+    n_features = len(features)
 
+    coords = {"features": features, 
+              "features_bis": features, 
+              "star_id": np.arange(n_stars_per_prog)}
+
+    with pm.Model(coords=coords) as model:
+        chol, corr, stds = pm.LKJCholeskyCov(
+            "chol", 
+            n=n_features, 
+            eta=1.0, 
+            sd_dist=pm.Exponential.dist(25, shape=n_features)
+        )
+        mu_components = pm.math.stack([pm.Normal("mu_E", sigma=0.1),
+                                       pm.Normal("mu_L", sigma=0.1),
+                                       pm.Normal("mu_FeH", mu=-0.20, sigma=0.08),
+                                       pm.Normal("mu_MgFe", mu=0.42, sigma=0.02)
+                                       ])
+        mu = pm.Deterministic("shifts", mu_components, dims="features")
+
+        noise_stars_in_single_prog = pm.MvNormal("noise", 
+                                                  mu, 
+                                                  chol=chol, 
+                                                  dims=("star_id", "features"))
+        
+        return model
+
+def sample_noise_training(model, 
+                          n_samples,
+                          random_seed):
+
+
+    with model:
+        prior_samples = pm.sample_prior_predictive(samples=n_samples,
+                                                   random_seed=random_seed)
+        noise_matrix = prior_samples.prior["noise"].values[0]
+        
+    return noise_matrix
+
+ 
+noise_model = generate_mean_cov_model(features=["E","L","FeH","MgFe"],
+                                      n_stars_per_prog=100)
+noise_list = sample_noise_training(model=noise_model,
+                                   n_samples=10000,
+                                   random_seed=16)
+
+from scipy.stats import binned_statistic
+
+sim_data = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/trials2/data/sim_ds_processed_Suite_ELFeHMgFe.pkl")
+
+# Bin by stellar mass
+n_bins = 20
+bins = np.logspace(6.4, 9.4, n_bins)
+log_Mstar = sim_data.groupby("progID")["log_Mprog_stellar"].median()
+
+def fn(group):
+    idx = np.random.randint(10000)
+    FeH_noise = noise_list[idx,:,2]
+    
+    group["FeH"] += np.random.choice(FeH_noise, len(group))
+    return group["FeH"].median()
+
+FeH_median = sim_data.groupby("progID").apply(fn)
+
+medians, edges, _ = binned_statistic(10**log_Mstar, FeH_median, statistic="median", bins=bins)
+
+std, edges, _ = binned_statistic(10**log_Mstar, FeH_median, statistic=np.std, bins=bins)
+
+bin_centres = np.log10((edges[1:]+edges[:-1])*0.5)
 
 fig, ax = plt.subplots()
+ax.step(bin_centres, 
+        medians,
+        c="k",
+        lw=3,
+        label="Auriga")
 
-for progID,Mstar in prog_Mstar_dict.items():
-    
-    median_FeH = prog_FeH_dict[progID] 
-    ax.scatter(Mstar, 
-               median_FeH,
-               s=1,
-               c="k",
-               alpha=0.5)
-    
-# MW satellites prediction
+ax.fill_between(bin_centres,
+                medians+3*std,
+                medians-3*std,
+                alpha=0.25,
+                color="k",
+                step="pre"
+               )
+
+# Plot Naidu MZR
+def naidu_FeH(logM):
+    return -2.11 + 0.36*(logM-6)
+
+x = np.linspace(6.4,9.4,100)
+ax.plot(x,
+        naidu_FeH(x),
+        ls="--",
+        c="k",
+        lw=3,
+        label="Naidu+22")
+
 for substructure in substructures:
 
     # Read data from observations
@@ -676,18 +762,20 @@ for substructure in substructures:
                 marker=substructure_markers[substructure],
                 capsize=2,
                 linewidth=1,
-                label=substructure_labels[substructure],
+                #label=substructure_labels[substructure],
                 color=colors_dict[substructure]
                 )
     
-ax.set_xlabel('log($M_{*}/M_{\odot}$)')
+ax.set_xlabel("$\log(M_{*}/\mathrm{M}_{\odot})$")
 ax.set_ylabel('[Fe/H]')
 
-ax.set_ylim([-2.5,-0.5])
-ax.set_xlim([6.4,10.4])
+ax.set_ylim([-2.8,0])
+ax.set_xlim([6.4,9.4])
 
-ax.set_aspect((4/2)*0.5)
+ax.set_aspect((4/2.8)*0.5)
+ax.legend(loc="lower right", fontsize=13, frameon=False)
 fig.savefig(f"{output_dir}MZR.pdf", dpi=400)
+
 
 
 #########################################################################################
@@ -715,17 +803,15 @@ for substructure in substructures:
 
 fig,ax = plt.subplots(1,1)
 
-xlim = [0.2,13.8]
-ylim = [8.8,12.5]
+xlim = [0,4.8]#[4.2,13.8]
+ylim = [8.8,12.2]
 ax.set_xlim(xlim)
 ax.set_ylim(ylim)
 
 ax.set_aspect((xlim[1]-xlim[0])/(ylim[1]-ylim[0])*0.5)
 
 ax.set_ylabel("$\log(M_{\mathrm{MW}}/\mathrm{M}_{\odot})$")
-ax.set_xlabel("Lookback Infall Time [Gyr]")
-
-
+ax.set_xlabel("Redshift of Accretion")
 
 for substructure in substructures:
     
@@ -740,20 +826,22 @@ for substructure in substructures:
                                      np.percentile(x,84))
                              )
     
-    ax.plot((output[1][1:]+output[1][:-1])/2,
+    bin_centres = z_at_value(Planck15.age, (13.78 - (output[1][1:]+output[1][:-1])/2)*u.Gyr).value
+    
+    ax.plot(bin_centres,
             output[0],
             color=colors_dict[substructure]
            )
     
-    ax.bar(x=np.percentile(x,16),
+    ax.bar(x=z_at_value( Planck15.age, (13.78 - np.percentile(x,16))*u.Gyr).value,
            align="edge",
            height=np.mean(output[0]),
            color=colors_dict[substructure],
-           width=np.percentile(x,84)-np.percentile(x,16),
+           width=z_at_value( Planck15.age, (13.78 - np.percentile(x,84))*u.Gyr).value-z_at_value( Planck15.age, (13.78 - np.percentile(x,16))*u.Gyr).value,
            alpha=0.5
           )
 
-handles = []
+"""handles = []
 for substructure, color in colors_dict.items():
     if "Sequoia" in substructure:
         label = f"Sequoia ({substructure_labels[substructure]})"
@@ -774,7 +862,28 @@ fig.legend(handles=handles,
            ncols=3, 
            frameon=True, 
            edgecolor='black', 
-           fontsize=11)
+           fontsize=11)"""
+
+# Add the top axis for lookback infall time
+# Define the conversion functions
+def redshift_to_lookback(z):
+    return (13.78 - Planck15.age(z).value)
+
+ax.tick_params(which='both',top=False)
+
+secax = ax.secondary_xaxis('top')
+z_range = np.linspace(0,4,100)
+time_range = np.array([redshift_to_lookback(z) for z in z_range])
+idx_list = []
+for time in [5,8,10,12]:
+    idx = np.argmin((time_range-time)**2)
+    idx_list.append(idx)
+x_ticks = [z_range[idx] for idx in idx_list]
+secax.set_xticks(x_ticks)
+secax.set_xticklabels(['5','8','10','12'])
+secax.set_xlabel('Lookback Infall time [Gyr]')
+secax.tick_params(labeltop=True, labelbottom=False, direction='out')
+secax.tick_params(which='minor', bottom=False, top=False)
 
 fig.savefig(f"{output_dir}MW_mass_assembly_all_substructures.pdf", dpi=200)
 
@@ -826,8 +935,8 @@ fig.savefig(f"{output_dir}MW_mass_assembly_vs_auriga_all_substructures.pdf", dpi
 ######################################################################################
 
 fig, ax = plt.subplots(1,1, figsize=(8,6))
-xlim = [0.2,13.8]
-ylim = [-0.5,90]
+xlim = [4.2,13.8]
+ylim = [-0.5,20]
 ax.set_xlim(xlim)
 ax.set_ylim(ylim)
 
@@ -838,7 +947,7 @@ ax.set_xlabel("Lookback Infall Time [Gyr]")
 
 
 # Plot cumulative distribution of accreted stellar mass
-median_infall_time, median_accreted_stellar_mass = [], []
+median_infall_time, median_accreted_stellar_mass, colors_plot = [], [], []
 
 for substructure in substructures:
     samples = pickle.load(open(f"{posterior_samples_dir}{substructure}.pkl", "rb"))
@@ -857,32 +966,37 @@ for substructure in substructures:
                      alpha=0.5,
                      color=colors_dict[substructure]
                     )
+    colors_plot.append(colors_dict[substructure])
     
 
 # Order events from earliest to latest
 idx = np.argsort(median_infall_time)[::-1]
 accreted_stellar_mass = [10**median_accreted_stellar_mass[i] for i in idx]
 infall_time = [median_infall_time[i] for i in idx]
+colors_plot = [colors_plot[i] for i in idx]
 
 cdf = [sum(accreted_stellar_mass[:i+1])*1e-8 for i in range(len(accreted_stellar_mass))]
 
 ax.plot(infall_time,
         cdf,
         lw=3,
+        ls="--",
         c="k",
         label="MW accreted mass"
        )
 ax.scatter(infall_time,
         cdf,
         s=40,
-        c="k",
-        zorder=20
+        c=colors_plot,
+        zorder=20,
+        edgecolors="k",
+        linewidth=0.01,
        )
 ####
 ax.fill_between([0,14],
                 10,
                 18,
-                alpha=0.5,
+                alpha=0.25,
                 color="k",
                 label="MW stellar halo (Deason+19)"
                )
@@ -959,8 +1073,8 @@ for substructure in substructures:
 
 fig,ax = plt.subplots(1,1)
 
-xlim = [0.2,13.8]
-ylim = [8.8,12.5]
+xlim = [4.2,13.8]
+ylim = [-0.5,12.2]
 ax.set_xlim(xlim)
 ax.set_ylim(ylim)
 
@@ -1074,20 +1188,22 @@ fig.savefig(f"{output_dir}MW_mass_assembly_vs_auriga_naidu_split.pdf", dpi=400)
 ############################################################
 
 
+
+
 fig, ax = plt.subplots(1,1, figsize=(8,6))
-xlim = [0.2,13.8]
-ylim = [-0.5,90]
+xlim = [0,4.8]#[4.2,13.8]
+ylim = [-0.5,22]
 ax.set_xlim(xlim)
 ax.set_ylim(ylim)
 
 ax.set_aspect((xlim[1]-xlim[0])/(ylim[1]-ylim[0])*0.5)
 
 ax.set_ylabel("Mass $[\\times \, 10^{8} \, \mathrm{M}_{\odot}]$")
-ax.set_xlabel("Lookback Infall Time [Gyr]") 
+ax.set_xlabel("Redshift of Accretion") 
 
 
 # Plot cumulative distribution of accreted stellar mass
-median_infall_time, median_accreted_stellar_mass = [], []
+median_infall_time, median_accreted_stellar_mass, error_stellar_mass, colors_plot, markers_plot = [], [], [], [], []
 
 for substructure in substructures:
     samples = pickle.load(open(f"{posterior_samples_dir}{substructure}.pkl", "rb"))
@@ -1096,42 +1212,49 @@ for substructure in substructures:
     
     median_infall_time.append(np.percentile(infall_times,50))
     median_accreted_stellar_mass.append(np.percentile(stellar_mass,50))
+    error_stellar_mass.append(np.percentile(stellar_mass, 84) - np.percentile(stellar_mass, 16))
     
-    # Plot bands corresponding to accretion times
-    time_16 = np.percentile(assembly_dict[substructure][0], 16)
-    time_84 = np.percentile(assembly_dict[substructure][0], 84)
-    ax.fill_betweenx([ylim[0], ylim[1]],
-                     time_16,
-                     time_84,
-                     alpha=0.5,
-                     color=colors_dict[substructure]
-                    )
+    colors_plot.append(colors_dict[substructure])
+    markers_plot.append(substructure_markers[substructure])
     
 
 # Order events from earliest to latest
 idx = np.argsort(median_infall_time)[::-1]
 accreted_stellar_mass = [10**median_accreted_stellar_mass[i] for i in idx]
-infall_time = [median_infall_time[i] for i in idx]
+error_stellar_mass = np.array([error_stellar_mass[i] for i in idx])
+
+infall_time =  [z_at_value(Planck15.age, (13.78-median_infall_time[i])*u.Gyr).value for i in idx] #[median_infall_time[i] for i in idx]
+colors_plot = [colors_plot[i] for i in idx]
+markers_plot = [markers_plot[i] for i in idx]
 
 cdf = [sum(accreted_stellar_mass[:i+1])*1e-8 for i in range(len(accreted_stellar_mass))]
+cdf_e = [np.sqrt(sum(error_stellar_mass[:i+1]**2)) for i in range(len(accreted_stellar_mass))]
 
-ax.plot(infall_time,
+ax.step(infall_time,
         cdf,
         lw=3,
         c="k",
         label="MW accreted mass"
        )
-ax.scatter(infall_time,
-        cdf,
-        s=40,
-        c="k",
-        zorder=20
-       )
+
+for i in range(len(cdf)):
+    ax.errorbar(infall_time[i],
+            cdf[i],
+            yerr=cdf_e[i],
+            elinewidth=2,
+            capsize=5,
+            markersize=10,
+            c=colors_plot[i],
+            marker=markers_plot[i],
+            zorder=20,
+            markeredgecolor="k",        
+            linewidth=0.01
+        )
 ####
 ax.fill_between([0,14],
                 10,
                 18,
-                alpha=0.5,
+                alpha=0.25,
                 color="k",
                 label="MW stellar halo (Deason+19)"
                )
@@ -1148,4 +1271,40 @@ ax.fill_between([0,14],
 
 ax.legend(loc="upper left", fontsize=12, frameon=False)
 
+
+# Add the top axis for lookback infall time
+# Define the conversion functions
+def redshift_to_lookback(z):
+    return (13.78 - Planck15.age(z).value)
+
+ax.tick_params(which='both',top=False)
+
+secax = ax.secondary_xaxis('top')
+z_range = np.linspace(0,4,100)
+time_range = np.array([redshift_to_lookback(z) for z in z_range])
+idx_list = []
+for time in [5,8,10,12]:
+    idx = np.argmin((time_range-time)**2)
+    idx_list.append(idx)
+x_ticks = [z_range[idx] for idx in idx_list]
+secax.set_xticks(x_ticks)
+secax.set_xticklabels(['5','8','10','12'])
+secax.set_xlabel('Lookback Infall time [Gyr]')
+secax.tick_params(labeltop=True, labelbottom=False, direction='out')
+secax.tick_params(which='minor', bottom=False, top=False)
+
 fig.savefig(f"{output_dir}MW_mass_accreted_mass_naidu_split.pdf", dpi=400)
+
+ax.set_ylim([-0.5,200])
+ax.set_aspect(4.8/200)
+
+d = pickle.load(open("/mnt/aridata1/users/ariasant/MW-sbi/auriga_galaxies_stellar_mass.pkl","rb"))
+for v in d.values():
+    ax.plot([0,4.8],
+            [v*1e-8,v*1e-8],
+            lw=1,
+            ls="--",
+            c='k',
+            alpha=0.5
+           )
+fig.savefig(f"{output_dir}MW_mass_accreted_mass_naidu_split_with_auriga.pdf", dpi=400)

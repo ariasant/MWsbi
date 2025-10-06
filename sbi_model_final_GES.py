@@ -152,12 +152,13 @@ fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='ti
 sim_data["E"] = np.log(-sim_data["E"].values)
 sim_data["L"] = np.log(sim_data["L"].values)
 
-obs_data["E_ERR"] /= -obs_data["E"].values
+obs_data["E_ERR"] /= -obs_data["E"]
+obs_data["E_astronn_ERR"] /= -obs_data["E_astronn"]
 obs_data["E"] = np.log(-obs_data["E"].values)
-obs_data["L_ERR"] /= obs_data["L"].values
+obs_data["L_ERR"] /= obs_data["L"]
 obs_data["L"] = np.log(obs_data["L"].values)
 
-obs_noise = obs_data[["E_ERR","L_ERR","FeH_ERR","MgFe_ERR"]]
+obs_noise = obs_data[["E_ERR","L_ERR","FeH_ERR","MgFe_ERR"]].values
 
 # Plot data after processing
 fig = plot_stars_data([sim_data, obs_data, obs_data[obs_accreted]])
@@ -214,6 +215,7 @@ import os
 import pandas as pd
 import pickle
 import pymc as pm
+from sklearn.model_selection import train_test_split
 import time
 import torch
 
@@ -273,10 +275,10 @@ def generate_mean_cov_model(features,
             eta=1.0, 
             sd_dist=pm.Exponential.dist(25, shape=n_features)
         )
-        mu_components = pm.math.stack([pm.Uniform("mu_E", lower=-0.1, upper=0.1),#pm.Normal("mu_E", sigma=0.1),
-                                       pm.Uniform("mu_L", lower=-0.1, upper=0.1),#pm.Normal("mu_L", sigma=0.1),
-                                       pm.Uniform("mu_FeH", lower=-0.44, upper=0.), #pm.Normal("mu_FeH", mu=-0.20, sigma=0.08),
-                                       pm.Uniform("mu_MgFe", lower=0.38, upper=0.48)#pm.Normal("mu_MgFe", mu=0.42, sigma=0.02)
+        mu_components = pm.math.stack([pm.Normal("mu_E", sigma=0.1),
+                                       pm.Normal("mu_L", sigma=0.1),
+                                       pm.Normal("mu_FeH", mu=-0.20, sigma=0.08),
+                                       pm.Normal("mu_MgFe", mu=0.42, sigma=0.02)
                                        ])
         mu = pm.Deterministic("shifts", mu_components, dims="features")
 
@@ -286,46 +288,6 @@ def generate_mean_cov_model(features,
                                                   dims=("star_id", "features"))
         
         return model
-    
-
-def generate_err_model(features):
-
-    n_features = len(features)
-
-    coords = {"features": features, 
-              "features_bis": features}
-
-    with pm.Model(coords=coords) as model:
-        chol, corr, stds = pm.LKJCholeskyCov(
-            "chol", 
-            n=n_features, 
-            eta=1.0, 
-            sd_dist=pm.Exponential.dist(100, shape=n_features)
-        )
-        """mu_components = pm.math.stack([pm.Normal("err_E", mu=obs_noise["E_ERR"].mean(), sigma=obs_noise["E_ERR"].std()),
-                                       pm.Normal("err_L", mu=obs_noise["L_ERR"].mean(), sigma=obs_noise["L_ERR"].std()),
-                                       pm.Normal("err_FeH", mu=obs_noise["FeH_ERR"].mean(), sigma=obs_noise["FeH_ERR"].std()),
-                                       pm.Normal("err_MgFe", mu=obs_noise["MgFe_ERR"].mean(), sigma=obs_noise["MgFe_ERR"].std())
-                                       ])"""
-        mu_components = pm.math.stack([pm.Uniform("err_E", lower=obs_noise["E_ERR"].mean()-3*obs_noise["E_ERR"].std(),
-                                                           upper=obs_noise["E_ERR"].mean()+3*obs_noise["E_ERR"].std()),
-                                       pm.Uniform("err_L", lower=obs_noise["L_ERR"].mean()-3*obs_noise["L_ERR"].std(),
-                                                           upper=obs_noise["L_ERR"].mean()+3*obs_noise["L_ERR"].std()),
-                                       pm.Uniform("err_FeH", lower=obs_noise["FeH_ERR"].mean()-3*obs_noise["FeH_ERR"].std(),
-                                                           upper=obs_noise["FeH_ERR"].mean()+3*obs_noise["FeH_ERR"].std()),
-                                       pm.Uniform("err_MgFe", lower=obs_noise["MgFe_ERR"].mean()-3*obs_noise["MgFe_ERR"].std(),
-                                                           upper=obs_noise["MgFe_ERR"].mean()+3*obs_noise["MgFe_ERR"].std())
-                                       ])
-        mu = pm.Deterministic("obs_errors", mu_components, dims="features")
-
-
-        noise_stars_in_single_prog = pm.MvNormal("noise", 
-                                                  mu, 
-                                                  chol=chol, 
-                                                  dims="features")
-
-        return model
-
 
 def sample_noise_training(model, 
                           n_samples,
@@ -348,11 +310,6 @@ noise_list = sample_noise_training(model=noise_model,
                                    n_samples=10000,
                                    random_seed=16)
 
-obs_err_model = generate_err_model(features=["E_ERR","L_ERR","FeH_ERR","MgFe_ERR"])
-obs_err_list = sample_noise_training(model=obs_err_model,
-                                     n_samples=10000,
-                                     random_seed=17)
-
 if os.path.exists(data_file):
     print("Loading pre-saved training data...", flush=True)
     data = np.load(data_file)
@@ -372,9 +329,9 @@ else:
         if len(prog_data) < 100:
             continue
         # Sample the data n times
-        n = min(90, math.ceil(len(prog_data)//100))
+        n = min(10, math.ceil(len(prog_data)//100))
         for i in range(n):
-            idx_sample = np.random.choice(np.arange(len(prog_data)), size=100, replace=False)
+            idx_sample = np.random.randint(0, len(prog_data), size=100)
             u = np.random.uniform()
 
             if u>0.2: #progID in training_IDs:
@@ -390,7 +347,7 @@ else:
                 x += noise_prog
 
                 # Add observational uncertainties
-                obs_err = obs_err_list[np.random.randint(0,obs_err_list.shape[0],size=100)]
+                obs_err = obs_noise[np.random.randint(0,obs_noise.shape[0], size=100)]
                 x += obs_err
 
                 # Save to lists
@@ -429,10 +386,8 @@ data_scaler = RobustScaler()
 data_scaler.fit(obs_data[features].values)
 
 # Visualize noisy data
-noise_data = np.vstack([X_train+\
-                        noise_list[np.random.randint(0, noise_list.shape[0], size=X_train.shape[0])]+\
-                        obs_err_list[np.random.randint(0, obs_err_list.shape[0], size=X_train.shape[0]*100)].reshape(-1,100,4) 
-                        for i in range(10)])
+noise_data = np.vstack([X_train+noise_list[np.random.randint(0, noise_list.shape[0], size=X_train.shape[0])] 
+                        for i in range(100)])
 
 train_df = pd.DataFrame(data=noise_data.reshape(-1, len(features)), columns=features)
 
@@ -488,7 +443,7 @@ if not os.path.exists(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl"):
                                                val_data_=X_test,
                                                val_theta_=Y_test,
                                                noise_list=noise_list,
-                                               obs_noise_list=obs_err_list,
+                                               obs_noise_list=obs_noise,
                                                data_scaler=data_scaler,
                                                batch_size=batch_size,
                                                lr=lr,
@@ -547,7 +502,7 @@ for n in range(n_permutations):
     x = X_train + noise_list[np.random.randint(0, noise_list.shape[0], size=X_train.shape[0])]
     # Add observational uncertainties
     x_flat = x.reshape(-1, len(features))
-    x_flat += obs_err_list[np.random.randint(0, obs_err_list.shape[0], size=X_train.shape[0]*100)]
+    x_flat += obs_noise[np.random.randint(0, obs_noise.shape[0], size=x_flat.shape[0])]
     # Scale and reshape
     x = data_scaler.transform(x_flat).reshape(-1, 100, len(features))
     X_train_MAF.append(x)
@@ -733,15 +688,7 @@ for substructure in substructures:
     # Select 10 samples of 100 stars each from data
     # get how many times you can sample from the progenitor
     n_samples = math.ceil(len(data)/100)*10
-    if len(data)>=100:
-        data_samples = [data[np.random.choice(np.arange(len(data)), 
-                                            size=100, replace=False)] 
-                        for i in range(n_samples)]
-
-    else:
-        data_samples = [data[np.random.choice(np.arange(len(data)), 
-                                        size=100, replace=True)] 
-                    for i in range(n_samples)]
+    data_samples = [data[np.random.randint(0,len(data),size=100)] for i in range(n_samples)]
 
     # Sample the posterior of the progenitor properties as conditioned by each data sample
     posterior_samples = []
@@ -754,7 +701,7 @@ for substructure in substructures:
         data_sample, _, __ = compression_model(data_sample)
 
         # Decide how many samples to get from the posterior
-        n_samples = 1000
+        n_samples = 100
 
         # Get posterior samples
         theta_samples = posterior_model.sample((n_samples,), 
