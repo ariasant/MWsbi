@@ -12,8 +12,8 @@ import astropy.units as u
 from astropy.cosmology import Planck15, z_at_value
 
 
-output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/trials4/paper_plots/"
-posterior_samples_dir = "/mnt/aridata1/users/ariasant/MW-sbi/trials4/"
+output_dir = "/mnt/aridata1/users/ariasant/MW-sbi/trials5/paper_plots/"
+posterior_samples_dir = "/mnt/aridata1/users/ariasant/MW-sbi/trials5/"
 
 
 # Declare plot formatting

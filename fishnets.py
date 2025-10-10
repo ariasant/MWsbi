@@ -53,7 +53,7 @@ class MLP(nn.Module):
   @nn.compact
   def __call__(self, x):
     for feat in self.features[:-1]:
-      x = self.act(nn.Dense(feat)(x))
+            x = self.act(nn.Dense(feat)(x))
     x = nn.Dense(self.features[-1])(x)
     return x
 
@@ -63,13 +63,17 @@ class FishnetNetwork(nn.Module):
     hidden_channels: list
     n_p: int
     act: Callable = nn.leaky_relu
+    input_dim: int = 8
+    
 
     def setup(self):
 
         fdim = self.n_p + ((self.n_p * (self.n_p + 1)) // 2)
         fisherdim = ((self.n_p * (self.n_p + 1)) // 2)
-        self.scorenet = MLP(self.hidden_channels + (self.n_p,), act=self.act)
-        self.fishernet = MLP(self.hidden_channels + (fisherdim,), act=self.act)
+        self.scorenet = MLP(self.hidden_channels + (self.n_p,), 
+                            act=self.act)
+        self.fishernet = MLP(self.hidden_channels + (fisherdim,), 
+                             act=self.act)
 
     def __call__(self, x, mask=None):
 
@@ -112,7 +116,7 @@ class FISHNET():
         self.model = FishnetNetwork(hidden_channels=[n_nodes_per_layer] * n_hidden_layers,
                                     n_p=n_params)
         # Initialise weights
-        self.w = self.model.init(key, jnp.ones((n_d,n_params)))
+        self.w = self.model.init(key, jnp.ones((n_d,n_features)))
         
     def __call__(self, 
                  data: jnp.ndarray):
@@ -120,7 +124,7 @@ class FISHNET():
         # Apply function
         _app = lambda d: self.model.apply(self.w,d)  
 
-        mle_pred, score, fisher = jax.vmap(_app)(data.reshape(-1, self.n_d, self.n_params)[:])
+        mle_pred, score, fisher = jax.vmap(_app)(data.reshape(-1, self.n_d, self.n_features)[:])
 
         return np.array(mle_pred), score, fisher
 
@@ -150,7 +154,7 @@ class FISHNET():
             val_theta_ = jnp.array(val_theta_)
 
             # Scale data
-            val_data_ = data_scaler.transform(val_data_.reshape(-1,self.n_features)).reshape(-1,100,self.n_features)
+            val_data_ = data_scaler.transform(val_data_.reshape(-1,8)).reshape(-1,100,8)
             # Shuffle
             key = jax.random.PRNGKey(9900)
             # Select a number of training examples which is divisible by the batch size
@@ -221,13 +225,14 @@ class FISHNET():
             # Add calibration deviations
             _data = data_ + noise_list[cal_noise_idx[j]]
             # Add observation noise
-            _data = _data.reshape(-1,self.n_features) + obs_noise_list[obs_noise_idx[j]]
+            obs_err = obs_noise_list[obs_noise_idx[j]].reshape(_data.shape[0],100,4)
+            _data = np.concatenate([_data, obs_err], axis=2)
 
             # Scale data
-            _data = data_scaler.transform(_data) 
+            _data = data_scaler.transform(_data.reshape(-1,8)) 
             
             # Reshape data into the progenitor groups
-            _data = _data.reshape(-1,100,self.n_features)
+            _data = _data.reshape(-1,100,8)
 
             _data = jnp.array(_data)
 
@@ -238,7 +243,7 @@ class FISHNET():
             key,rng = jax.random.split(key)
             randidx = jax.random.permutation(key, jnp.arange(theta_.reshape(-1, self.n_params).shape[0]), independent=True)[:n_train]
             
-            _data = _data.reshape(-1, self.n_d, self.n_features)[randidx].reshape(batch_size, -1, self.n_d, self.n_features)
+            _data = _data.reshape(-1, self.n_d, 8)[randidx].reshape(batch_size, -1, self.n_d, 8)
             _theta = theta_.reshape(-1, self.n_params)[randidx].reshape(batch_size, -1, self.n_params)            
 
             inits = (self.w, loss_val, opt_state, _data, _theta)
@@ -253,7 +258,7 @@ class FISHNET():
 
             if val_data_ is not None and val_theta_ is not None:
 
-                _val_data = val_data_.reshape(-1, self.n_d, self.n_features)[val_randidx].reshape(batch_size, -1, self.n_d, self.n_features)
+                _val_data = val_data_.reshape(-1, self.n_d, 8)[val_randidx].reshape(batch_size, -1, self.n_d, 8)
                 _val_theta = val_theta_.reshape(-1, self.n_params)[val_randidx].reshape(batch_size, -1, self.n_params)
                 
                 _val_data = _val_data.reshape(-1, _val_data.shape[2], _val_data.shape[3])
