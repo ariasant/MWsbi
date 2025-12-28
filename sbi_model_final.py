@@ -5,6 +5,63 @@ import os
 import pandas as pd
 import pickle
 from sklearn.preprocessing import RobustScaler
+from imblearn.over_sampling import RandomOverSampler
+
+
+def oversample_data(X,Y):
+    
+    x_idx = np.arange(len(X))
+    class_x = np.zeros_like(x_idx)
+    bin_edges = [[6,8], [8,9], [9,11]] # stellar mass   
+    masks = [((Y[:,1]>be[0])&(Y[:,1]<be[1])) for be in bin_edges]
+
+    for i,mask in enumerate(masks):
+        class_x[mask] = i
+        
+    for c in set(class_x):
+        f = len(class_x[class_x==c]) / len(class_x)
+        print(f"Class {c}: {f:.2f}")
+
+    print("="*30)
+    ros = RandomOverSampler(random_state=42)
+    
+    x_idx_new, new_class_x = ros.fit_resample(x_idx[:,None], class_x)
+    #
+    for c in set(new_class_x):
+        f = len(new_class_x[new_class_x==c]) / len(new_class_x)
+        print(f"Class {c}: {f:.2f}")
+        
+    return X[x_idx_new][:,0], Y[x_idx_new][:,0]
+
+def shuffle_axis1_independently(array):
+    """
+    Shuffles the order of elements along axis 1 (the 100 dimension)
+    independently for each slice along axis 0 (the N dimension).
+    """
+    N, D2, D3 = array.shape
+    
+    # Create an array of random permutations for the 100 positions.
+    # The shape will be (N, D2).
+    # Each row will contain a unique shuffle of [0, 1, ..., 99].
+    # We use np.arange(D2) to get the base indices [0, 1, ..., 99].
+    permutations = np.stack([
+        np.random.permutation(D2) for _ in range(N)
+    ])
+    
+    # Now, we use advanced indexing to apply these permutations.
+    # 1. np.arange(N) creates the row indices [0, 1, ..., N-1].
+    # 2. We expand it to (N, 1) and broadcast it to (N, D2).
+    # 3. This gives us the index pairs (i, permutations[i, j]) for the new array.
+    
+    # We need a meshgrid to match the row index (Ni) to its corresponding permutation.
+    # row_indices: [[0, 0, ..., 0], [1, 1, ..., 1], ...] (Shape N x 100)
+    row_indices = np.arange(N)[:, np.newaxis]
+    
+    # Apply the advanced indexing:
+    # array[row_indices, permutations, :]
+    shuffled_array = array[row_indices, permutations, :]
+    
+    return shuffled_array
 
 def call_plotting_formatting():
 
@@ -263,6 +320,7 @@ test_IDs = np.array([ID for ID in prog_IDs if ID not in training_IDs])
 data_file = f"{output_dir}data/training_data.npz"
 
 
+
 def generate_mean_cov_model(features, 
                             n_stars_per_prog):
 
@@ -276,13 +334,13 @@ def generate_mean_cov_model(features,
         chol, corr, stds = pm.LKJCholeskyCov(
             "chol", 
             n=n_features, 
-            eta=1.0, 
-            sd_dist=pm.Exponential.dist(25, shape=n_features)
+            eta=1, 
+            sd_dist=pm.Exponential.dist(100, shape=n_features)
         )
-        mu_components = pm.math.stack([pm.Normal("mu_E", sigma=0.1),
-                                       pm.Normal("mu_L", sigma=0.1),
-                                       pm.Normal("mu_FeH", mu=-0.20, sigma=0.08),
-                                       pm.Normal("mu_MgFe", mu=0.42, sigma=0.02)
+        mu_components = pm.math.stack([pm.Uniform("mu_E", lower=-0.1, upper=0.1),
+                                       pm.Uniform("mu_L", lower=-0.1, upper=0.1),
+                                       pm.Uniform("mu_FeH", lower=-1.0, upper=-0.2),
+                                       pm.Uniform("mu_MgFe", lower=0.3, upper=0.5) 
                                        ])
         mu = pm.Deterministic("shifts", mu_components, dims="features")
 
@@ -293,7 +351,6 @@ def generate_mean_cov_model(features,
         
 
         return model
-    
 
 def generate_err_model(features):
 
@@ -312,14 +369,14 @@ def generate_err_model(features):
 
         obs_noise_acc = obs_noise[obs_noise["L_ERR"]>0]
 
-        mu_components = pm.math.stack([pm.Normal("err_E", mu=obs_noise_acc["E_ERR"].mean(),
-                                                          sigma=obs_noise_acc["E_ERR"].std()),
-                                       pm.Normal("err_L", mu=obs_noise_acc["L_ERR"].mean(),
-                                                          sigma=obs_noise_acc["L_ERR"].std()),
-                                       pm.Normal("err_FeH", mu=obs_noise_acc["FeH_ERR"].mean(),
-                                                            sigma=obs_noise_acc["FeH_ERR"].std()),
-                                       pm.Normal("err_MgFe", mu=obs_noise_acc["MgFe_ERR"].mean(),
-                                                            sigma=obs_noise_acc["MgFe_ERR"].std())
+        mu_components = pm.math.stack([pm.Uniform("err_E", lower=0,
+                                                           upper=obs_noise_acc["E_ERR"].mean()+2*obs_noise_acc["E_ERR"].std()),
+                                       pm.Uniform("err_L", lower=0,
+                                                           upper=obs_noise_acc["L_ERR"].mean()+2*obs_noise_acc["L_ERR"].std()),
+                                       pm.Uniform("err_FeH", lower=0,
+                                                           upper=obs_noise_acc["FeH_ERR"].mean()+2*obs_noise_acc["FeH_ERR"].std()),
+                                       pm.Uniform("err_MgFe", lower=0,
+                                                           upper=obs_noise_acc["MgFe_ERR"].mean()+2*obs_noise_acc["MgFe_ERR"].std())
                                        ])
         mu = pm.Deterministic("n", mu_components, dims="features")
 
@@ -352,13 +409,15 @@ noise_model = generate_mean_cov_model(features=features,
 noise_list = sample_noise_training(model=noise_model,
                                    n_samples=10000,
                                    random_seed=16)
+# Add some zero-noise values to allow the model to pickup some of the signal
+noise_list = np.vstack([noise_list,
+                        np.zeros((1000,100,4))])
 
 obs_err_model = generate_err_model(features=["E_ERR","L_ERR","FeH_ERR","MgFe_ERR"])
 obs_err_list = sample_noise_training(model=obs_err_model,
                                      n_samples=10000,
                                      random_seed=17)
 obs_err_list = np.abs(obs_err_list)
-#obs_err_list = obs_data[errors].sample(10000).values
 
 if os.path.exists(data_file):
     print("Loading pre-saved training data...", flush=True)
@@ -378,8 +437,8 @@ else:
         prog_data = sim_data[sim_data["progID"]==progID]
         if len(prog_data) < 100:
             continue
-        # Sample the data n times
-        n = min(90, math.ceil(len(prog_data)//100))
+        # Sample the data n times (maximum 20 and minimum 10 times)
+        n = max(min(20, math.ceil(len(prog_data)//100)),10)
         for i in range(n):
             idx_sample = np.random.choice(np.arange(len(prog_data)), size=100, replace=False)
             u = np.random.uniform()
@@ -409,6 +468,13 @@ else:
     Y_train = np.stack(Y_train)
     X_test = np.stack(X_test)
     Y_test = np.stack(Y_test)
+    
+    # Oversample training data
+    X_train, Y_train = oversample_data(X_train, Y_train)
+    
+    # Shuffle training examples
+    X_train = shuffle_axis1_independently(X_train)
+    
 
     print("Saving training data for future use...", flush=True)
     np.savez(data_file, 
@@ -477,8 +543,18 @@ prior = Uniform(low=[0,6,8,-3],
 ####################################################################################
 
 if not os.path.exists(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl"):
-    fishnet_params = {"n_hidden_layers": 10,
-                      "n_nodes_per_layer": 128}
+    
+    # Run hyperparameter search
+    print("Starting hyperparameter search for the fishnets model", flush=True)
+    fishnet_params = optuna_opt.hyperparameter_search_fishnets(X_train=X_train,
+                                                            Y_train=Y_train,
+                                                            X_test=X_test,
+                                                            Y_test=Y_test,
+                                                            data_scaler=data_scaler,
+                                                            noise_list=noise_list,
+                                                            obs_err_list=obs_err_list,
+                                                            study_dir=f"{output_dir}optuna/")
+
 
     # Learn data compression model with fishnet
     compression_model = fishnets.FISHNET(n_params=4,
@@ -487,7 +563,7 @@ if not os.path.exists(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl"):
                                          **fishnet_params)
 
     # Train the compression model
-    n_epochs = 10000
+    n_epochs = 15000
     print("Training compression model...", flush=True)
     start = time.time()
     training_results = compression_model.train(data_=X_train,
@@ -526,17 +602,22 @@ if not os.path.exists(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl"):
     fig.savefig(f"{output_dir}{filename}_compression_model_training.pdf", dpi=300, bbox_inches='tight')
 
 else:
+    
+    # Load optuna study
+    study_name = "fishnets_study"
+    storage_name = f"sqlite:///{output_dir}fishnets_study.db"
+    study = optuna.load_study(study_name=study_name,
+                                storage=storage_name)
 
-    fishnet_params = {"n_hidden_layers": 10,
-                    "n_nodes_per_layer": 128}
+    fishnet_params = study.best_trial.params
 
     # Learn data compression model with fishnet
     compression_model = fishnets.FISHNET(n_params=4,
-                                        n_d=100,
-                                        n_features=len(features)+len(errors),
-                                        **fishnet_params)
+                                         n_d=100,
+                                         n_features=len(features)+len(errors),
+                                         **fishnet_params)
     
-    best_weights = pickle.load(open(f"{output_dir}/weights/epoch_4999.pkl","rb"))
+    best_weights = pickle.load(open(f"{output_dir}Suite_ELFeHMgFe_compression_model_w.pkl","rb"))
     compression_model.w = best_weights
     
 
@@ -564,7 +645,6 @@ for n in range(n_permutations):
 train_ds = np.vstack(X_train_MAF)
 train_ds = torch.from_numpy(train_ds).float().to(device)
 train_ds = jax.dlpack.from_dlpack(train_ds, copy=False)
-print(train_ds.shape, flush=True)
 train_ds = compression_model(train_ds)[0]
 train_ds = torch.from_dlpack(train_ds).float().to(device)
 
@@ -588,17 +668,25 @@ loader = TorchLoader(train_loader=train_loader, val_loader=val_loader)
 
 ##########
 # Use OPTUNA to find the best set of MAF parameters
+import optuna
+from optuna_opt import hyperparameter_search
 
-"""from optuna_opt import hyperparameter_search
+if not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db"):
 
-npe_params = hyperparameter_search(loader=loader,
-                                   prior=prior,
-                                   study_dir=f"{output_dir}optuna/",
-                                   X_test=X_test,
-                                   Y_test=Y_test)"""
-
-npe_params = {"hidden_features": 128,
-              "num_transforms": 10}
+    npe_params = hyperparameter_search(loader=loader,
+                                       prior=prior,
+                                       study_dir=f"{output_dir}optuna/",
+                                       X_test=val_ds.cpu().numpy(),
+                                       Y_test=val_ds_labels.cpu().numpy())
+    
+else:
+    # Load study
+    study = optuna.load_study(study_name="ltu_ili_npe_tarp_study",
+                              storage=f"sqlite:///{output_dir}optuna/ltu_ili_npe_tarp_study.db")
+    # Consider parameters from trial with lowest tarp
+    tarp_values = [t.values[1] for t in study.best_trials]
+    npe_params = study.best_trials[np.argmin(tarp_values)].params
+    
 
 
 from ili.inference import InferenceRunner
@@ -609,7 +697,7 @@ train_args = dict(
     training_batch_size=10000,
     learning_rate=lr,
     stop_after_epochs=10000,
-    max_epochs=5000
+    max_epochs=10000
 )
 
 # Update NPE model with results of optimisation

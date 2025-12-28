@@ -131,11 +131,11 @@ class FISHNET():
     def train(self, 
               data_: np.ndarray,
               theta_: np.ndarray,
-              val_data_: np.ndarray = None,
-              val_theta_: np.ndarray = None,
-              noise_list: np.ndarray = None,
-              obs_noise_list: np.array = None,
-              data_scaler = None,
+              val_data_: np.ndarray,
+              val_theta_: np.ndarray,
+              noise_list: np.ndarray,
+              obs_noise_list: np.array,
+              data_scaler,
               lr: float = 1e-4,
               batch_size: int = 200,
               epochs: int = 3000,
@@ -149,18 +149,17 @@ class FISHNET():
         obs_noise_list = obs_noise_list
 
 
-        if val_data_ is not None:
-            val_data_ = jnp.array(val_data_)
-            val_theta_ = jnp.array(val_theta_)
+        val_data_ = jnp.array(val_data_)
+        val_theta_ = jnp.array(val_theta_)
 
-            # Scale data
-            val_data_ = data_scaler.transform(val_data_.reshape(-1,8)).reshape(-1,100,8)
-            # Shuffle
-            key = jax.random.PRNGKey(9900)
-            # Select a number of training examples which is divisible by the batch size
-            n_val = (val_data_.shape[0]//batch_size)*batch_size
-            # shuffle data 
-            val_randidx = jax.random.permutation(key, jnp.arange(val_theta_.reshape(-1, self.n_params).shape[0]), independent=True)[:n_val]
+        # Scale data
+        val_data_ = data_scaler.transform(val_data_.reshape(-1,8)).reshape(-1,100,8)
+        # Shuffle
+        key = jax.random.PRNGKey(9900)
+        # Select a number of training examples which is divisible by the batch size
+        n_val = (val_data_.shape[0]//batch_size)*batch_size
+        # shuffle data 
+        val_randidx = jax.random.permutation(key, jnp.arange(val_theta_.reshape(-1, self.n_params).shape[0]), independent=True)[:n_val]
            
 
 

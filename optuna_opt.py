@@ -1,16 +1,12 @@
 import optuna
 import numpy as np
 import torch
-from ili.dataloaders import TorchLoader
 import fishnets
-from ili.utils import Uniform, load_nde_lampe
+from ili.utils import load_nde_lampe
 from ili.inference import InferenceRunner
 from ili.validation.metrics import PosteriorSamples
 import tarp
 import torch
-from torch.utils.data import Dataset
-import jax
-import jax.numpy as jnp
 from my_func import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -49,9 +45,9 @@ def hyperparameter_search(loader,
 
         # Sample hyperparameters NPE
         hidden_features = trial.suggest_int("hidden_features", 100, 500, step=20)
-        num_transforms = trial.suggest_int("num_transforms", 5, 20)
-
+        num_transforms = trial.suggest_int("num_transforms", 10, 50)
         
+
         # Define NPE model
         nets = load_nde_lampe(
                 model="maf",
@@ -91,10 +87,10 @@ def hyperparameter_search(loader,
 
         log_p = -100 if np.isinf(log_p) else log_p
 
-        return 1,abs(tarp_val - 0.5)#log_p,abs(tarp_val - 0.5)
+        return log_p,abs(tarp_val - 0.5)
 
     # Run the study
-    study.optimize(objective, n_trials=100, timeout=1800)
+    study.optimize(objective, n_trials=100, timeout=18000)
 
     # Save study
 
@@ -108,5 +104,68 @@ def hyperparameter_search(loader,
 
     return best.params
 
+def hyperparameter_search_fishnets(X_train,
+                                   Y_train,
+                                   X_test,
+                                   Y_test,
+                                   data_scaler,
+                                   noise_list,
+                                   obs_err_list,
+                                   study_dir
+                                   ):
+    
+    # Create optuna study
+    storage = optuna.storages.RDBStorage(url=f"sqlite:///{study_dir}fishnets_study.db", 
+                                         engine_kwargs={"connect_args": {"timeout": 300}})
+    
+    study = optuna.create_study(directions=["minimize"],
+                                storage=storage,
+                                load_if_exists=True,
+                                sampler=optuna.samplers.TPESampler(seed=42),
+                                study_name="fishnets_study")
+
+    def objective_fishnets(trial):
+        
+        n_hidden_layers = trial.suggest_int("n_hidden_layers", 10, 50)
+        n_nodes_per_layer = trial.suggest_int("n_nodes_per_layer", 100, 500, step=20)
+
+        fishnet_params = {"n_hidden_layers": n_hidden_layers,
+                        "n_nodes_per_layer": n_nodes_per_layer}
+
+        # Learn data compression model with fishnet
+        compression_model = fishnets.FISHNET(n_params=4,
+                                            n_d=100,
+                                            n_features=8,
+                                            **fishnet_params)
+
+        # Train the compression model
+        n_epochs = 1000
+        print("Training compression model...", flush=True)
+        start = time.time()
+        try:
+            training_results = compression_model.train(data_=X_train,
+                                                    theta_=Y_train,
+                                                    val_data_=X_test,
+                                                    val_theta_=Y_test,
+                                                    noise_list=noise_list,
+                                                    obs_noise_list=obs_err_list,
+                                                    data_scaler=data_scaler,
+                                                    epochs=n_epochs)
+        except:
+            return 1000
+        
+        return np.median(training_results["val_losses"][-10:])
+    
+    # Run the study
+    study.optimize(objective_fishnets, n_trials=100, timeout=18000)
+
+    # Save study
+    print("\nBest trial:", flush=True)
+    best = study.best_trial
+    print(f"  Log-prob: {best.values[0]:.4f}", flush=True)
+    print("  Params:", flush=True)
+    for k, v in best.params.items():
+        print(f"{k}: {v}")
 
 
+    return best.params

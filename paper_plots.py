@@ -832,14 +832,6 @@ for substructure in substructures:
             output[0],
             color=colors_dict[substructure]
            )
-    
-    ax.bar(x=z_at_value( Planck15.age, (13.78 - np.percentile(x,16))*u.Gyr).value,
-           align="edge",
-           height=np.mean(output[0]),
-           color=colors_dict[substructure],
-           width=z_at_value( Planck15.age, (13.78 - np.percentile(x,84))*u.Gyr).value-z_at_value( Planck15.age, (13.78 - np.percentile(x,16))*u.Gyr).value,
-           alpha=0.5
-          )
 
 """handles = []
 for substructure, color in colors_dict.items():
@@ -1073,63 +1065,75 @@ for substructure in substructures:
 
 fig,ax = plt.subplots(1,1)
 
-xlim = [4.2,13.8]
-ylim = [-0.5,12.2]
+xlim = [0,4.8]
+ylim = [10.5,12.1]
 ax.set_xlim(xlim)
 ax.set_ylim(ylim)
 
 ax.set_aspect((xlim[1]-xlim[0])/(ylim[1]-ylim[0])*0.5)
 
 ax.set_ylabel("$\log(M_{\mathrm{MW}}/\mathrm{M}_{\odot})$")
-ax.set_xlabel("Lookback Infall Time [Gyr]")
+ax.set_xlabel("Redshift of Accretion") 
 
 
+infall_time_list, proto_MW_mass_list = [], []
 
 for substructure in substructures:
     
     x = assembly_dict[substructure][0]
     y = assembly_dict[substructure][1]
     
-    output = binned_statistic(x=x, 
-                              values=y, 
-                              bins=20, 
-                              statistic="mean",
-                              range=(np.percentile(x,16),
-                                     np.percentile(x,84))
-                             )
+    infall_time = np.median(x)
+    proto_MW_mass = y[np.argmin((x-infall_time)**2)]
+
+    # Convert time to redshift
+    infall_time = z_at_value(Planck15.age, (13.78-infall_time)*u.Gyr).value
+
+    infall_time_list.append(infall_time)
+    proto_MW_mass_list.append(proto_MW_mass)
+
+    # Plot marker of merger
+    ax.scatter(infall_time,
+                proto_MW_mass,
+                s=80,
+                c=colors_dict[substructure],
+                marker=substructure_markers[substructure],
+                zorder=20,
+                edgecolor="k",        
+                linewidth=0.01
+    )
+
+
+order = np.argsort(infall_time_list)[::-1]
+ax.step(np.array(infall_time_list)[order],
+        np.array(proto_MW_mass_list)[order],
+        lw=3,
+        c="k",
+        where='post'
+       )
+
+# Add the top axis for lookback infall time
+# Define the conversion functions
+def redshift_to_lookback(z):
+    return (13.78 - Planck15.age(z).value)
+
+ax.tick_params(which='both',top=False)
+
+secax = ax.secondary_xaxis('top')
+z_range = np.linspace(0,4,100)
+time_range = np.array([redshift_to_lookback(z) for z in z_range])
+idx_list = []
+for time in [5,8,10,12]:
+    idx = np.argmin((time_range-time)**2)
+    idx_list.append(idx)
+x_ticks = [z_range[idx] for idx in idx_list]
+secax.set_xticks(x_ticks)
+secax.set_xticklabels(['5','8','10','12'])
+secax.set_xlabel('Lookback Infall time [Gyr]')
+secax.tick_params(labeltop=True, labelbottom=False, direction='out')
+secax.tick_params(which='minor', bottom=False, top=False)
     
-    ax.plot((output[1][1:]+output[1][:-1])/2,
-            output[0],
-            color=colors_dict[substructure]
-           )
-    
-    ax.bar(x=np.percentile(x,16),
-           align="edge",
-           height=np.mean(output[0]),
-           color=colors_dict[substructure],
-           width=np.percentile(x,84)-np.percentile(x,16),
-           alpha=0.5
-          )
 
-handles = []
-for substructure in substructures:
-    label = substructure_labels[substructure]
-        
-    line = plt.Line2D([],[], 
-                   linestyle='-', 
-                   linewidth=5,
-                   color=colors_dict[substructure],
-                   label=label) 
-    handles.append(line)
-
-
-fig.legend(handles=handles,
-           loc="upper center", 
-           bbox_to_anchor=(0.51, 1.06), 
-           ncols=3, 
-           frameon=True, 
-           edgecolor='black', 
-           fontsize=11)
 
 fig.savefig(f"{output_dir}MW_mass_assembly_naidu_split.pdf", dpi=400)
 
@@ -1234,7 +1238,8 @@ ax.step(infall_time,
         cdf,
         lw=3,
         c="k",
-        label="MW accreted mass"
+        label="MW accreted mass",
+        where='post'
        )
 
 for i in range(len(cdf)):
