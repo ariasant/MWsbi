@@ -15,15 +15,16 @@ def hyperparameter_search(loader,
                           prior,
                           study_dir,
                           X_test,
-                          Y_test):
-    
+                          Y_test,
+                          n_trials: int = 100):
 
+                          
     train_args = dict(
         training_batch_size=256,
         learning_rate=1e-4,
         stop_after_epochs=100,
-        max_epochs=500,
-        clip_max_norm=5
+        max_epochs=100,
+        clip_max_norm=1
     )
 
 
@@ -69,7 +70,10 @@ def hyperparameter_search(loader,
         )
 
         # Train NPE
-        posterior, summaries = runner(loader=loader)
+        try:
+            posterior, summaries = runner(loader=loader)
+        except:
+            return -100, 100
 
         # Evaluate log probability and TARP curve for validation data
         # TARP midpoint deviation
@@ -90,7 +94,7 @@ def hyperparameter_search(loader,
         return log_p,abs(tarp_val - 0.5)
 
     # Run the study
-    study.optimize(objective, n_trials=100, timeout=18000)
+    study.optimize(objective, n_trials=n_trials, timeout=18000)
 
     # Save study
 
@@ -111,7 +115,8 @@ def hyperparameter_search_fishnets(X_train,
                                    data_scaler,
                                    noise_list,
                                    obs_err_list,
-                                   study_dir
+                                   study_dir,
+                                   n_trials: int = 100
                                    ):
     
     # Create optuna study
@@ -133,13 +138,13 @@ def hyperparameter_search_fishnets(X_train,
                         "n_nodes_per_layer": n_nodes_per_layer}
 
         # Learn data compression model with fishnet
-        compression_model = fishnets.FISHNET(n_params=4,
-                                            n_d=100,
-                                            n_features=8,
-                                            **fishnet_params)
+        compression_model = fishnets.FISHNET(n_params=Y_train.shape[1],
+                                             n_d=X_train.shape[1],
+                                             n_features=X_test.shape[2],
+                                             **fishnet_params)
 
         # Train the compression model
-        n_epochs = 1000
+        n_epochs = 100
         print("Training compression model...", flush=True)
         start = time.time()
         try:
@@ -153,11 +158,12 @@ def hyperparameter_search_fishnets(X_train,
                                                     epochs=n_epochs)
         except:
             return 1000
+            
         
         return np.median(training_results["val_losses"][-10:])
     
     # Run the study
-    study.optimize(objective_fishnets, n_trials=100, timeout=18000)
+    study.optimize(objective_fishnets, n_trials=n_trials, timeout=18000)
 
     # Save study
     print("\nBest trial:", flush=True)
