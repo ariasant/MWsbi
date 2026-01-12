@@ -528,12 +528,12 @@ if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
     print(f"Compression model trained in {end-start:.2f} seconds", flush=True)
 
     # Load weights from best epoch
-    best_epoch = np.argmin(training_results["val_losses"])
-    best_loss = training_results["val_losses"][best_epoch]
+    val_losses = training_results["val_losses"]
+    val_losses[np.isnan(val_losses)] = np.inf
+    best_epoch = np.argmin(val_losses)
+    best_loss = val_losses[best_epoch]
     print(f"Loading weights from epoch {best_epoch} with val loss {best_loss:.2f}", flush=True)
     best_weights = pickle.load(open(f"{output_dir}/weights/epoch_{best_epoch}.pkl","rb"))
-
-    compression_model.w = best_weights
 
     # Save the compression model weights
     pickle.dump(compression_model.w, open(f"{output_dir}{filename}_compression_model_w.pkl", "wb"))
@@ -585,8 +585,10 @@ else:
     print(f"Compression model trained in {end-start:.2f} seconds", flush=True)
 
     # Load weights from best epoch
-    best_epoch = np.argmin(training_results["val_losses"])
-    best_loss = training_results["val_losses"][best_epoch]
+    val_losses = training_results["val_losses"]
+    val_losses[np.isnan(val_losses)] = np.inf
+    best_epoch = np.argmin(val_losses)
+    best_loss = val_losses[best_epoch]
     print(f"Loading weights from epoch {best_epoch} with val loss {best_loss:.2f}", flush=True)
     best_weights = pickle.load(open(f"{output_dir}/weights/epoch_{best_epoch}.pkl","rb"))
 
@@ -667,7 +669,7 @@ np.savez(f"{output_dir}data/compressed_data_{filename}.npz",
          X_test=val_data.cpu().numpy(),
          Y_test=val_labels.cpu().numpy())
 
-# Create  a TensorDataset object
+# Create a TensorDataset object
 train_ds = torch.utils.data.TensorDataset(train_ds, train_ds_labels)
 val_ds = torch.utils.data.TensorDataset(val_data, val_labels)
 

@@ -149,13 +149,14 @@ def hyperparameter_search_fishnets(X_train,
         start = time.time()
         try:
             training_results = compression_model.train(data_=X_train,
-                                                    theta_=Y_train,
-                                                    val_data_=X_test,
-                                                    val_theta_=Y_test,
-                                                    noise_list=noise_list,
-                                                    obs_noise_list=obs_err_list,
-                                                    data_scaler=data_scaler,
-                                                    epochs=n_epochs)
+                                                       theta_=Y_train,
+                                                       val_data_=X_test,
+                                                       val_theta_=Y_test,
+                                                       noise_list=noise_list,
+                                                       obs_noise_list=obs_err_list,
+                                                       data_scaler=data_scaler,
+                                                       burn_in=20,
+                                                       epochs=n_epochs)
         except:
             return 1000
             
