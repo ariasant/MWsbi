@@ -155,7 +155,6 @@ class FISHNET():
               val_data_: np.ndarray,
               val_theta_: np.ndarray,
               noise_list: np.ndarray,
-              obs_noise_list: np.array,
               data_scaler,
               lr: float = 1e-4,
               batch_size: int = 200,
@@ -167,18 +166,15 @@ class FISHNET():
         rng = np.random.default_rng(42)
         
         n_cal_noise = noise_list.shape[0]
-        n_obs_noise = obs_noise_list.shape[0]
         n_data = data_.shape[0]
         n_val_data = val_data_.shape[0]
         
         # Create a different noise configuration each epoch
         key_noise = jax.random.PRNGKey(998)
         cal_noise_idx = rng.integers(0, n_cal_noise, size=(epochs,n_data))
-        obs_noise_idx = rng.integers(0, n_obs_noise, size=(epochs,n_data*100))
 
         # Repeat for validation data
         cal_noise_idx_val = rng.integers(0, n_cal_noise, size=n_val_data)
-        obs_noise_idx_val = rng.integers(0, n_obs_noise, size=n_val_data*100)
 
         
         # Scale train and validation parameters
@@ -189,12 +185,9 @@ class FISHNET():
         
         # Add calibration deviations
         val_data_ = val_data_ + noise_list[cal_noise_idx_val]
-        # Add observation noise
-        obs_err = obs_noise_list[obs_noise_idx_val].reshape(n_val_data,100,4)
-        val_data_ = np.concatenate([val_data_, obs_err], axis=2)
 
         # Scale validation data
-        val_data_ = data_scaler.transform(val_data_.reshape(-1,8)).reshape(-1,100,8)
+        val_data_ = data_scaler.transform(val_data_.reshape(-1,4)).reshape(-1,100,4)
 
         # Initialise loss function  
         def kl_loss(w, x_batched, theta_batched, rng_key):
@@ -269,21 +262,18 @@ class FISHNET():
         print("Start training", flush=True)
         for j in pbar:
             
-            # Add calibration deviations
-            _data = data_ + noise_list[cal_noise_idx[j]]
 
-            # Add observation noise
             if j>=burn_in:
-                obs_err = obs_noise_list[obs_noise_idx[j]].reshape(_data.shape[0],100,4)
-                _data = np.concatenate([_data, obs_err], axis=2)
+                # Add calibration deviations
+                _data = data_ + noise_list[cal_noise_idx[j]]
             else:
-                _data = np.concatenate([data_, np.zeros_like(data_)],axis=2)
+                _data = data_
 
             # Scale data
-            _data = data_scaler.transform(_data.reshape(-1,8)) 
+            _data = data_scaler.transform(_data.reshape(-1,4)) 
             
             # Reshape data into the progenitor groups
-            _data = _data.reshape(-1,100,8)
+            _data = _data.reshape(-1,100,4)
 
             _data = jnp.array(_data)
 
@@ -294,7 +284,7 @@ class FISHNET():
             key,rng = jax.random.split(key)
             randidx = jax.random.permutation(key, jnp.arange(theta_.reshape(-1, self.n_params).shape[0]), independent=True)[:n_train]
             
-            _data = _data.reshape(-1, self.n_d, 8)[randidx].reshape( -1, batch_size, self.n_d, 8)
+            _data = _data.reshape(-1, self.n_d, 4)[randidx].reshape( -1, batch_size, self.n_d, 4)
             _theta = theta_.reshape(-1, self.n_params)[randidx].reshape(-1, batch_size, self.n_params)            
 
             inits = (self.w, loss_val, opt_state, _data, _theta, loop_key)

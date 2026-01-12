@@ -155,10 +155,9 @@ def plot_stars_data(dfs: list, features: list[str], RANGE=None):
 
 
 features = ['E', 'L', 'FeH', 'MgFe']
-errors = ["E_ERR","L_ERR","FeH_ERR","MgFe_ERR"]
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/trials4/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/no_obs_noise/'
 
 print(f"output_dir: {output_dir}", flush=True)
 
@@ -177,7 +176,7 @@ substructures = ['Arjuna','GES', 'Sagittarius', 'Helmi',
 # Load Milky Way (target) data
 obs_data = pd.read_pickle("/mnt/aridata1/users/ariasant/MW-sbi/data/apogee_substructures_ds.pkl")
 
-obs_data.dropna(subset=features+errors, inplace=True)
+obs_data.dropna(subset=features, inplace=True)
 obs_data = obs_data[(obs_data["E"]<0)&(obs_data["L"]>0)]
 # Select accreted stars
 obs_accreted = ((obs_data.AlFe<-0.07) & (obs_data.MgMn>=0.25)) | \
@@ -214,12 +213,8 @@ fig.savefig(f"{output_dir}initial_data_{filename}.pdf", dpi=300, bbox_inches='ti
 sim_data["E"] = np.log(-sim_data["E"].values)
 sim_data["L"] = np.log(sim_data["L"].values)
 
-obs_data["E_ERR"] /= -obs_data["E"].values
 obs_data["E"] = np.log(-obs_data["E"].values)
-obs_data["L_ERR"] /= obs_data["L"].values
 obs_data["L"] = np.log(obs_data["L"].values)
-
-obs_noise = obs_data[["E_ERR","L_ERR","FeH_ERR","MgFe_ERR"]]
 
 
 # Plot data after processing
@@ -253,7 +248,7 @@ fig = corner.corner(sim_data[parameters].values,
 fig.savefig(f"{output_dir}merger_parameters_{filename}.pdf", dpi=300, bbox_inches='tight')
 
 data_scaler = RobustScaler() 
-data_scaler.fit(obs_data[features+errors].values)
+data_scaler.fit(obs_data[features].values)
 
 
 # Save processed simulation data
@@ -377,7 +372,6 @@ if os.path.exists(data_file):
     X_test = data["X_test"]
     Y_test = data["Y_test"]
     noise_list = data["noise_list"]
-    obs_err_list = data["obs_err_list"]
 
     print(f"X_train shape: {X_train.shape}", flush=True)
     print(f"Y_train shape: {Y_train.shape}", flush=True)
@@ -387,7 +381,6 @@ if os.path.exists(data_file):
 else:
 
     # Generate noise realisations for training and validation data
-    print("Generating noise realisations", flush=True)
     print("Generating noise for validation and training data...", flush=True)
     
     noise_model = generate_mean_cov_model(features=features,
@@ -395,10 +388,6 @@ else:
     noise_list = sample_noise_training(model=noise_model,
                                    n_samples=10000,
                                    random_seed=16)
-    # Add some zero-noise values to allow the model to pickup some of the signal
-    noise_list = np.vstack([noise_list,
-                            np.zeros((1000,100,4))])
-    obs_err_list = obs_data.loc[obs_data["E_ERR"]>0,errors].sample(n=10000, replace=True, random_state=16).values
 
     print("Splitting merger-stars pairs in Auriga into training and validation sets...", flush=True)
     # Create datasets for training 
@@ -440,8 +429,7 @@ else:
     np.savez(data_file, 
              X_train=X_train, Y_train=Y_train,
              X_test=X_test, Y_test=Y_test,
-             noise_list=noise_list,
-             obs_err_list=obs_err_list)
+             noise_list=noise_list)
 
 
     print(f"X_train shape: {X_train.shape}", flush=True)
@@ -451,20 +439,18 @@ else:
 
 #####################################################
 
-#obs_err_list = np.zeros_like(obs_err_list)
 
 # Visualize noisy data
-x_plot = np.zeros((X_train.shape[0],100,8))
+x_plot = []
 for i in range(10):
-    obs_err_plot = obs_err_list[np.random.randint(0, obs_err_list.shape[0], size=X_train.shape[0]*100)].reshape(X_train.shape[0],100,4)
-    x_plot = np.vstack([x_plot,np.concatenate([X_train,obs_err_plot], axis=2)])
-    x_plot[(i+1)*X_train.shape[0]: (i+2)*X_train.shape[0],:,:4] = X_train[:,:,:4]+ noise_list[np.random.randint(0, noise_list.shape[0], size=X_train.shape[0])]
+    noise = noise_list[np.random.randint(0, noise_list.shape[0], size=X_train.shape[0])]
+    x_plot.append(X_train + noise)
     
-x_plot = x_plot[X_train.shape[0]:]
+x_plot = np.vstack(x_plot)
 
-train_df = pd.DataFrame(data=x_plot.reshape(-1, len(features)+len(errors)), columns=features+errors)
+train_df = pd.DataFrame(data=x_plot.reshape(-1, len(features)), columns=features)
 
-fig = plot_stars_data([train_df, obs_data, obs_data[obs_accreted]], features=features+errors)
+fig = plot_stars_data([train_df, obs_data, obs_data[obs_accreted]], features=features)
 # Add legend
 labels = ["Auriga", "MW", "MW (accreted)"]
 colors = [mpl.cm.tab10(i/3) for i in range(3)]
@@ -488,25 +474,24 @@ fig.savefig(f"{output_dir}train_data_with_noise_{filename}.pdf", dpi=300, bbox_i
 ####################################################################################
 ####################################################################################
 
-if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
+if (not os.path.exists(f"{output_dir}/optuna/fishnets_study.db")) & (not os.path.exists(f"{output_dir}{filename}_compression_model_w.pkl")):
     
     # Run hyperparameter search
     print("Starting hyperparameter search for the fishnets model", flush=True)
-    fishnet_params = optuna_opt.hyperparameter_search_fishnets(X_train=X_train,
+    """fishnet_params = optuna_opt.hyperparameter_search_fishnets(X_train=X_train,
                                                                Y_train=Y_train,
                                                                X_test=X_test,
                                                                Y_test=Y_test,
                                                                data_scaler=data_scaler,
                                                                noise_list=noise_list,
-                                                               obs_err_list=obs_err_list,
                                                                study_dir=f"{output_dir}optuna/",
-                                                               n_trials=100)         
-    """fishnet_params = {"n_hidden_layers": 30, 
-                      "n_nodes_per_layer": 300}                 """  
+                                                               n_trials=100)   """      
+    fishnet_params = {"n_hidden_layers": 10, 
+                      "n_nodes_per_layer": 300}                 
 
     compression_model = fishnets.FISHNET(n_params=4,
                                          n_d=100,
-                                         n_features=len(features)+len(errors),
+                                         n_features=len(features),
                                          **fishnet_params)                 
 
     # Train the compression model
@@ -518,7 +503,6 @@ if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
                                                 val_data_=X_test,
                                                 val_theta_=Y_test,
                                                 noise_list=noise_list,
-                                                obs_noise_list=obs_err_list,
                                                 data_scaler=data_scaler,
                                                 batch_size=batch_size,
                                                 lr=lr,
@@ -528,7 +512,7 @@ if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
     print(f"Compression model trained in {end-start:.2f} seconds", flush=True)
 
     # Load weights from best epoch
-    val_losses = training_results["val_losses"]
+    val_losses = np.array(training_results["val_losses"])
     val_losses[np.isnan(val_losses)] = np.inf
     best_epoch = np.argmin(val_losses)
     best_loss = val_losses[best_epoch]
@@ -550,66 +534,26 @@ if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
 
     
 
-else:
+elif os.path.exists(f"{output_dir}{filename}_compression_model_w.pkl"):
+
+    fishnet_params = {"n_hidden_layers": 10, 
+                      "n_nodes_per_layer": 300} 
     
-    # Load optuna study
+    """# Load optuna study
     study_name = "fishnets_study"
     storage_name = f"sqlite:///{output_dir}optuna/fishnets_study.db"
     study = optuna.load_study(study_name=study_name,
                                 storage=storage_name)
 
-    fishnet_params = study.best_trial.params
+    fishnet_params = study.best_trial.params"""
 
-    # Learn data compression model with fishnet
     compression_model = fishnets.FISHNET(n_params=4,
                                          n_d=100,
-                                         n_features=len(features)+len(errors),
-                                         **fishnet_params)
-    
-    # Train the compression model
-    n_epochs = 1000
-    print("Training compression model...", flush=True)
-    start = time.time()
-    training_results = compression_model.train(data_=X_train,
-                                                theta_=Y_train,
-                                                val_data_=X_test,
-                                                val_theta_=Y_test,
-                                                noise_list=noise_list,
-                                                obs_noise_list=obs_err_list,
-                                                data_scaler=data_scaler,
-                                                batch_size=batch_size,
-                                                lr=lr,
-                                                epochs=n_epochs,
-                                                weights_dir=f"{output_dir}/weights/")
-    end = time.time()
-    print(f"Compression model trained in {end-start:.2f} seconds", flush=True)
+                                         n_features=len(features),
+                                         **fishnet_params)                 
 
-    # Load weights from best epoch
-    val_losses = training_results["val_losses"]
-    val_losses[np.isnan(val_losses)] = np.inf
-    best_epoch = np.argmin(val_losses)
-    best_loss = val_losses[best_epoch]
-    print(f"Loading weights from epoch {best_epoch} with val loss {best_loss:.2f}", flush=True)
-    best_weights = pickle.load(open(f"{output_dir}/weights/epoch_{best_epoch}.pkl","rb"))
-
-    compression_model.w = best_weights
-
-    # Save the compression model weights
-    pickle.dump(compression_model.w, open(f"{output_dir}{filename}_compression_model_w.pkl", "wb"))
-
-    # Plot training 
-    fig, ax = mpl.pyplot.subplots()
-    ax.plot(training_results['losses'], label="Training Loss")
-    ax.plot(training_results['val_losses'], label="Validation Loss")
-    ax.set_xlabel("Epochs")
-    ax.set_ylabel("Loss (log)")
-    ax.set_ylim([10, -10])
-    ax.legend()
-    fig.savefig(f"{output_dir}{filename}_compression_model_training.pdf", dpi=300, bbox_inches='tight')
-
-    
-    """# Load model parameters from best trial training
-    compression_model.w = pickle.load(open(f"{output_dir}{filename}_compression_model_w.pkl", "rb"))"""
+    # Load model parameters from best trial training
+    compression_model.w = pickle.load(open(f"{output_dir}{filename}_compression_model_w.pkl", "rb"))
 
 
 
@@ -619,24 +563,20 @@ n_permutations = 10 # Number of noise realisations per merger-stars pair
 
 class data_aggregator():
 
-    def __init__(self, compression_model, data_scaler, noise_list, obs_err_list):
+    def __init__(self, compression_model, data_scaler, noise_list):
 
         self.compression_model = compression_model
         self.data_scaler = data_scaler
         self.noise_list = noise_list
-        self.obs_err_list = obs_err_list
 
     def __call__(self, X, add_noise=True):
 
         if add_noise:
             # Add random calibration noise
             x = X + self.noise_list[rng.integers(0, self.noise_list.shape[0], size=X.shape[0])]
-            # Add observational uncertainties
-            x = np.concatenate([x,self.obs_err_list[rng.integers(0, self.obs_err_list.shape[0], 
-                                                            size=X.shape[0]*100)].reshape(-1,100,4)], 
-                                axis=2)
+
         # Scale and reshape
-        x = self.data_scaler.transform(x.reshape(-1,8)).reshape(-1, 100, 8)
+        x = self.data_scaler.transform(x.reshape(-1,4)).reshape(-1, 100, 4)
         # Data aggregation with fishnets
         x = self.compression_model(x)[0]
         # Cast to torch tensor
@@ -646,8 +586,7 @@ class data_aggregator():
 
 data_agg = data_aggregator(compression_model=compression_model,
                            data_scaler=data_scaler,
-                           noise_list=noise_list,
-                           obs_err_list=obs_err_list)
+                           noise_list=noise_list)
 
 # Get n permutations of the noise realisations
 X_train_MAF = []
@@ -692,16 +631,16 @@ prior = Uniform(low=[0,6,8,-3],
 
 
 
-if not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db"):
+if (not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db")) & (not os.path.exists(f'{output_dir}{filename}.pkl')):
 
-    npe_params = hyperparameter_search(loader=loader,
+    """npe_params = hyperparameter_search(loader=loader,
                                        prior=prior,
                                        study_dir=f"{output_dir}optuna/",
                                        X_test=val_data.cpu().numpy(),
                                        Y_test=val_labels.cpu().numpy(), 
-                                       n_trials=100)
-    """npe_params = {"hidden_features": 100,
-                  "num_transforms": 10,}"""
+                                       n_trials=100)"""
+    npe_params = {"hidden_features": 100,
+                  "num_transforms": 10,}
 
     # Train NPE
     train_args = dict(
@@ -751,62 +690,17 @@ if not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db"):
     
 else:
 
-    # Load optuna study
+    """# Load optuna study
     study_name = "ltu_ili_npe_tarp_study"
     storage_name = f"sqlite:///{output_dir}optuna/ltu_ili_npe_tarp_study.db"
     study = optuna.load_study(study_name=study_name,
                                 storage=storage_name)
 
-    npe_params = study.best_trials[0].params
+    npe_params = study.best_trials[0].params"""
 
-    # Train NPE
-    train_args = dict(
-        training_batch_size=batch_size,
-        learning_rate=lr,
-        stop_after_epochs=100,
-        max_epochs=1000,
-        clip_max_norm=1
-    )
-
-    # Update NPE model with results of optimisation
-    nets = [load_nde_lampe(**npe_params,
-                        model="maf",
-                        x_normalize=True,
-                        theta_normalize=True,
-                        device=device,
-    ) for i in range(3)]
-
-    # Re-define runner with optimised flows
-    runner = InferenceRunner.load(
-            backend="lampe",
-            engine="NPE",
-            prior=prior,
-            nets=nets,
-            device=device,
-            train_args=train_args,
-        )
-
-    posterior_model, summaries = runner(loader=loader)
-
-    # Plot train/validation loss
-    fig, ax = plt.subplots(1, 1, figsize=(6,4))
-    c = list(mcolors.TABLEAU_COLORS)
-    for i, m in enumerate(summaries):
-        ax.plot(m['training_log_probs'], ls='-', label=f"{i}_train", c=c[i], alpha=0.5)
-        ax.plot(m['validation_log_probs'], ls='--', label=f"{i}_val", c=c[i])
-    ax.set_xlim(0)
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Log probability')
-    ax.set_ylim([-10,5])
-    ax.legend(fontsize=8)
-    fig.savefig(output_dir+f'{filename}_training_plot.png', dpi=400)
-
-    # Save posterior
-    pickle.dump(posterior_model, 
-                open(f'{output_dir}{filename}.pkl', 'wb'))
     
     # Load model trained with best parameters
-    # posterior_model = pickle.load(open(f'{output_dir}{filename}.pkl', 'rb'))
+    posterior_model = pickle.load(open(f'{output_dir}{filename}.pkl', 'rb'))
 
 
 ####################################################################################
@@ -874,7 +768,7 @@ for substructure in substructures:
     print(f"Sampling posterior for {substructure}...", flush=True)
 
     # Select chemo-dynamical properties for the stars in the substructure 
-    data = obs_data.loc[obs_data[substructure+"_flag"]==1,features+errors].values
+    data = obs_data.loc[obs_data[substructure+"_flag"]==1,features].values
 
     # Select 10 samples of 100 stars each from data
     # get how many times you can sample from the progenitor
