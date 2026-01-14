@@ -18,14 +18,6 @@ def hyperparameter_search(loader,
                           Y_test,
                           n_trials: int = 100):
 
-                          
-    train_args = dict(
-        training_batch_size=256,
-        learning_rate=1e-4,
-        stop_after_epochs=100,
-        max_epochs=100,
-        clip_max_norm=1
-    )
 
 
     # Create optuna study
@@ -47,11 +39,20 @@ def hyperparameter_search(loader,
         # Sample hyperparameters NPE
         hidden_features = trial.suggest_int("hidden_features", 100, 500, step=20)
         num_transforms = trial.suggest_int("num_transforms", 10, 50)
+
+        # Sample training arguments
+        train_args = dict(
+                training_batch_size=int(pow(2,trial.suggest_int("batch_size", 5, 12))),
+                learning_rate=trial.suggest_loguniform("lr", 1e-5, 1e-2),
+                stop_after_epochs=100,
+                max_epochs=100,
+                clip_max_norm=1
+        )
         
 
         # Define NPE model
         nets = load_nde_lampe(
-                model="maf",
+                model="nsf",
                 hidden_features=hidden_features,
                 num_transforms=num_transforms,
                 x_normalize=True,
@@ -114,7 +115,6 @@ def hyperparameter_search_fishnets(X_train,
                                    Y_test,
                                    data_scaler,
                                    noise_list,
-                                   obs_err_list,
                                    study_dir,
                                    n_trials: int = 100
                                    ):
@@ -134,8 +134,12 @@ def hyperparameter_search_fishnets(X_train,
         n_hidden_layers = trial.suggest_int("n_hidden_layers", 10, 50)
         n_nodes_per_layer = trial.suggest_int("n_nodes_per_layer", 100, 500, step=20)
 
+        # Sample training parameters
+        lr = trial.suggest_loguniform("lr", 1e-5, 1e-2)
+        batch_size = int(pow(2,trial.suggest_int("batch_size", 5, 12)))
+
         fishnet_params = {"n_hidden_layers": n_hidden_layers,
-                        "n_nodes_per_layer": n_nodes_per_layer}
+                          "n_nodes_per_layer": n_nodes_per_layer}
 
         # Learn data compression model with fishnet
         compression_model = fishnets.FISHNET(n_params=Y_train.shape[1],
@@ -153,10 +157,11 @@ def hyperparameter_search_fishnets(X_train,
                                                        val_data_=X_test,
                                                        val_theta_=Y_test,
                                                        noise_list=noise_list,
-                                                       obs_noise_list=obs_err_list,
                                                        data_scaler=data_scaler,
                                                        burn_in=20,
-                                                       epochs=n_epochs)
+                                                       epochs=n_epochs,
+                                                       lr=lr,
+                                                       batch_size=batch_size)
         except:
             return 1000
             

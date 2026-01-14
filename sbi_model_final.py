@@ -285,8 +285,7 @@ import fishnets
 import optuna_opt
 import sbi_results
 import sbi_training
-
-
+from scipy.ndimage import gaussian_filter1d
 import time
 import pickle
 import torch
@@ -338,7 +337,7 @@ def generate_mean_cov_model(features,
         )
         mu_components = pm.math.stack([pm.Uniform("mu_E", lower=-0.1, upper=0.1),
                                        pm.Uniform("mu_L", lower=-0.1, upper=0.1),
-                                       pm.Uniform("mu_FeH", lower=-1.0, upper=-0.2),
+                                       pm.Uniform("mu_FeH", lower=-0.5, upper=0.0),
                                        pm.Uniform("mu_MgFe", lower=0.2, upper=0.6) 
                                        ])
         mu = pm.Deterministic("shifts", mu_components, dims="features")
@@ -384,10 +383,10 @@ else:
     print("Generating noise for validation and training data...", flush=True)
     
     noise_model = generate_mean_cov_model(features=features,
-                                        n_stars_per_prog=100)
+                                          n_stars_per_prog=100)
     noise_list = sample_noise_training(model=noise_model,
-                                   n_samples=10000,
-                                   random_seed=16)
+                                       n_samples=10000,
+                                       random_seed=16)
 
     print("Splitting merger-stars pairs in Auriga into training and validation sets...", flush=True)
     # Create datasets for training 
@@ -467,6 +466,18 @@ mpl.pyplot.legend(
         )
 fig.savefig(f"{output_dir}train_data_with_noise_{filename}.pdf", dpi=300, bbox_inches='tight')
 
+# Plot merger parameters after oversampling
+new_sim_data = pd.DataFrame(data=Y_train, columns=parameters)
+fig = corner.corner(new_sim_data[parameters].values,
+                    color='k',
+                    labels=parameters,
+                    bins=20,
+                    plot_contours=False,
+                    plot_datapoints=False,
+                    fill_contours=False,
+                    hist_kwargs={"density": True})
+fig.savefig(f"{output_dir}oversampled_merger_parameters_{filename}.pdf", dpi=300, bbox_inches='tight')
+
 
 ####################################################################################
 ####################################################################################
@@ -474,28 +485,26 @@ fig.savefig(f"{output_dir}train_data_with_noise_{filename}.pdf", dpi=300, bbox_i
 ####################################################################################
 ####################################################################################
 
-if (not os.path.exists(f"{output_dir}/optuna/fishnets_study.db")) & (not os.path.exists(f"{output_dir}{filename}_compression_model_w.pkl")):
+if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
     
     # Run hyperparameter search
     print("Starting hyperparameter search for the fishnets model", flush=True)
-    """fishnet_params = optuna_opt.hyperparameter_search_fishnets(X_train=X_train,
+    fishnet_params = optuna_opt.hyperparameter_search_fishnets(X_train=X_train,
                                                                Y_train=Y_train,
                                                                X_test=X_test,
                                                                Y_test=Y_test,
                                                                data_scaler=data_scaler,
                                                                noise_list=noise_list,
                                                                study_dir=f"{output_dir}optuna/",
-                                                               n_trials=100)   """      
-    fishnet_params = {"n_hidden_layers": 10, 
-                      "n_nodes_per_layer": 300}                 
-
+                                                               n_trials=100)                       
     compression_model = fishnets.FISHNET(n_params=4,
                                          n_d=100,
                                          n_features=len(features),
-                                         **fishnet_params)                 
+                                         n_hidden_layers=fishnet_params["n_hidden_layers"],
+                                         n_nodes_per_layer=fishnet_params["n_nodes_per_layer"])                 
 
     # Train the compression model
-    n_epochs = 1000
+    n_epochs = 2000
     print("Training compression model...", flush=True)
     start = time.time()
     training_results = compression_model.train(data_=X_train,
@@ -504,8 +513,9 @@ if (not os.path.exists(f"{output_dir}/optuna/fishnets_study.db")) & (not os.path
                                                 val_theta_=Y_test,
                                                 noise_list=noise_list,
                                                 data_scaler=data_scaler,
-                                                batch_size=batch_size,
-                                                lr=lr,
+                                                batch_size=pow(2,fishnet_params["batch_size"]),
+                                                burn_in=50,
+                                                lr=fishnet_params["lr"],
                                                 epochs=n_epochs,
                                                 weights_dir=f"{output_dir}/weights/")
     end = time.time()
@@ -513,6 +523,7 @@ if (not os.path.exists(f"{output_dir}/optuna/fishnets_study.db")) & (not os.path
 
     # Load weights from best epoch
     val_losses = np.array(training_results["val_losses"])
+    val_losses = gaussian_filter1d(val_losses, sigma=2)
     val_losses[np.isnan(val_losses)] = np.inf
     best_epoch = np.argmin(val_losses)
     best_loss = val_losses[best_epoch]
@@ -526,18 +537,17 @@ if (not os.path.exists(f"{output_dir}/optuna/fishnets_study.db")) & (not os.path
     fig, ax = mpl.pyplot.subplots()
     ax.plot(training_results['losses'], label="Training Loss")
     ax.plot(training_results['val_losses'], label="Validation Loss")
+    ax.plot(val_losses, label="Smoothed Validation Loss")
     ax.set_xlabel("Epochs")
     ax.set_ylabel("Loss (log)")
     ax.set_ylim([10, -10])
-    ax.legend()
+    ax.legend(ncol=3)
     fig.savefig(f"{output_dir}{filename}_compression_model_training.pdf", dpi=300, bbox_inches='tight')
 
     
 
-elif os.path.exists(f"{output_dir}{filename}_compression_model_w.pkl"):
+else:
 
-    fishnet_params = {"n_hidden_layers": 10, 
-                      "n_nodes_per_layer": 300} 
     
     """# Load optuna study
     study_name = "fishnets_study"
@@ -547,10 +557,66 @@ elif os.path.exists(f"{output_dir}{filename}_compression_model_w.pkl"):
 
     fishnet_params = study.best_trial.params"""
 
+    fishnet_params = {'n_hidden_layers': 10,
+                      'n_nodes_per_layer': 128,
+                      'batch_size': 8,
+                      'lr': 0.0001}
+
+
+    lr = fishnet_params["lr"]
+    batch_size = pow(2,fishnet_params["batch_size"])
+
+    print(f"Best fishnet parameters: {fishnet_params}", flush=True)
+    print(f"Learning rate: {lr}", flush=True)
+    print(f"Batch size: {batch_size}", flush=True)
+
     compression_model = fishnets.FISHNET(n_params=4,
                                          n_d=100,
                                          n_features=len(features),
-                                         **fishnet_params)                 
+                                         n_hidden_layers=fishnet_params["n_hidden_layers"],
+                                         n_nodes_per_layer=fishnet_params["n_nodes_per_layer"])      
+
+    # Train the compression model
+    n_epochs = 100
+    print("Training compression model...", flush=True)
+    start = time.time()
+    training_results = compression_model.train(data_=X_train,
+                                                theta_=Y_train,
+                                                val_data_=X_test,
+                                                val_theta_=Y_test,
+                                                noise_list=noise_list,
+                                                data_scaler=data_scaler,
+                                                batch_size=batch_size,
+                                                burn_in=5,
+                                                lr=lr,
+                                                epochs=n_epochs,
+                                                weights_dir=f"{output_dir}/weights/")
+    end = time.time()
+    print(f"Compression model trained in {end-start:.2f} seconds", flush=True)
+
+    # Load weights from best epoch
+    val_losses = np.array(training_results["val_losses"])
+    val_losses = gaussian_filter1d(val_losses, sigma=2)
+    val_losses[np.isnan(val_losses)] = np.inf
+    best_epoch = np.argmin(val_losses)
+    best_loss = val_losses[best_epoch]
+    print(f"Loading weights from epoch {best_epoch} with val loss {best_loss:.2f}", flush=True)
+    best_weights = pickle.load(open(f"{output_dir}/weights/epoch_{best_epoch}.pkl","rb"))
+
+    # Save the compression model weights
+    pickle.dump(compression_model.w, open(f"{output_dir}{filename}_compression_model_w.pkl", "wb"))
+
+    # Plot training 
+    fig, ax = mpl.pyplot.subplots()
+    ax.plot(training_results['losses'], label="Training Loss")
+    ax.plot(training_results['val_losses'], label="Validation Loss")
+    ax.plot(val_losses, label="Smoothed Validation Loss")
+    ax.set_xlabel("Epochs")
+    ax.set_ylabel("Loss (log)")
+    ax.set_ylim([10, -10])
+    ax.legend(ncol=3, fontsize=10)
+    fig.savefig(f"{output_dir}{filename}_compression_model_training.pdf", dpi=300, bbox_inches='tight')           
+                 
 
     # Load model parameters from best trial training
     compression_model.w = pickle.load(open(f"{output_dir}{filename}_compression_model_w.pkl", "rb"))
@@ -569,11 +635,11 @@ class data_aggregator():
         self.data_scaler = data_scaler
         self.noise_list = noise_list
 
-    def __call__(self, X, add_noise=True):
+    def __call__(self, x, add_noise=True):
 
         if add_noise:
             # Add random calibration noise
-            x = X + self.noise_list[rng.integers(0, self.noise_list.shape[0], size=X.shape[0])]
+            x += self.noise_list[rng.integers(0, self.noise_list.shape[0], size=x.shape[0])]
 
         # Scale and reshape
         x = self.data_scaler.transform(x.reshape(-1,4)).reshape(-1, 100, 4)
@@ -623,6 +689,7 @@ loader = TorchLoader(train_loader=train_loader, val_loader=val_loader)
 import optuna
 from optuna_opt import hyperparameter_search
 from ili.inference import InferenceRunner
+from scipy.ndimage import gaussian_filter1d
 
 
 prior = Uniform(low=[0,6,8,-3],
@@ -631,33 +698,31 @@ prior = Uniform(low=[0,6,8,-3],
 
 
 
-if (not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db")) & (not os.path.exists(f'{output_dir}{filename}.pkl')):
+if not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db"):
 
-    """npe_params = hyperparameter_search(loader=loader,
+    npe_params = hyperparameter_search(loader=loader,
                                        prior=prior,
                                        study_dir=f"{output_dir}optuna/",
                                        X_test=val_data.cpu().numpy(),
                                        Y_test=val_labels.cpu().numpy(), 
-                                       n_trials=100)"""
-    npe_params = {"hidden_features": 100,
-                  "num_transforms": 10,}
+                                       n_trials=100)
 
     # Train NPE
     train_args = dict(
-        training_batch_size=batch_size,
-        learning_rate=lr,
+        training_batch_size=pow(2,npe_params["batch_size"]),
+        learning_rate=npe_params["lr"],
         stop_after_epochs=100,
-        max_epochs=1000,
+        max_epochs=2000,
         clip_max_norm=1
     )
 
     # Update NPE model with results of optimisation
-    nets = [load_nde_lampe(**npe_params,
-                        model="maf",
-                        x_normalize=True,
-                        theta_normalize=True,
-                        device=device,
-    ) for i in range(3)]
+    nets = [load_nde_lampe(hidden_features=npe_params["hidden_features"],
+                           num_transforms=npe_params["num_transforms"],
+                           model="nsf",
+                           x_normalize=True,
+                           theta_normalize=True,
+                           device=device) for i in range(3)]
 
     # Re-define runner with optimised flows
     runner = InferenceRunner.load(
@@ -698,9 +763,15 @@ else:
 
     npe_params = study.best_trials[0].params"""
 
-    
+    npe_params = {'hidden_features': 64,
+                      'num_transforms': 5,
+                      'batch_size': 8,
+                      'lr': 0.0001}
+
+
     # Load model trained with best parameters
     posterior_model = pickle.load(open(f'{output_dir}{filename}.pkl', 'rb'))
+
 
 
 ####################################################################################
@@ -756,6 +827,11 @@ sbi_results.count_predictions_within_range(samples={"SUITE":samples},
 # Application to Milky Way substructures
 ####################################################################################
 ####################################################################################
+
+plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
+             'log($M_{*}/M_{\odot}$)',
+             'log($M/M_{\odot}$)', 
+             'MMR (log)']
 
 substructures = ['Arjuna', 'GES', 'Sagittarius', 'Helmi',
                  'Sequoia_K19','Sequoia_M19','Sequoia_N20','Iitoi', 'Thamnos',
