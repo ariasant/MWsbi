@@ -1,16 +1,64 @@
 import colorcet as cc
+from ili.validation.metrics import PosteriorCoverage
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import numpy as np
 import pickle
-from my_utils.plotting_utils import call_plotting_formatting, generate_color_list
+from codes.plotting_utils import call_plotting_formatting, generate_color_list
 from scipy import stats
+import torch
 
 
 colors = cc.glasbey_light  # Color map
 
 # Set-up plot formatting
 call_plotting_formatting()
+
+def validation(posterior_ensemble, 
+               test_dictionary, 
+               filename,
+               output_dir='/mnt/aridata1/users/ariasant/auriga-sbi/samples/100+/with_satellites/'):
+
+    # Generate samples from posterior for test examples
+    seed_samp = 42
+    torch.manual_seed(seed_samp)
+
+    test_samples = {}
+    for X_obs, theta_fid, progID in zip(test_dictionary['X'],
+                                        test_dictionary['Y'],
+                                        test_dictionary['ID']):
+
+        samples = posterior_ensemble.sample((1000,),
+                                            torch.Tensor(X_obs).to(device)
+                                            )
+        # calculate the log_prob for each sample
+        log_prob = posterior_ensemble.log_prob(samples, torch.Tensor(X_obs).to(device))
+
+        test_samples[progID] = (samples.cpu().numpy(), 
+                                log_prob.cpu().numpy(),
+                                theta_fid)
+
+    
+    metric = PosteriorCoverage(
+        num_samples=1000, sample_method='direct', 
+        labels=[f'$\\theta_{i}$' for i in range(len(theta_fid))],
+        plot_list = ["coverage", "tarp", "logprob"],
+        out_dir=None
+    )
+
+    try:
+        figs = metric(
+            posterior=posterior_ensemble, 
+            x=test_dictionary['X'], theta=test_dictionary['Y']
+        )
+
+        for i,fig in enumerate(figs):
+            fig.savefig(f"{output_dir}{filename}_validation{i+1}.png", dpi=400)
+
+    except:
+        pass
+    
+    return test_samples
 
 def cross_validation_plot(samples, plot_ranges, plot_labels, percentile_range, filename):
 
