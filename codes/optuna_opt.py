@@ -1,13 +1,14 @@
 import optuna
 import numpy as np
 import torch
-import fishnets
+import codes.fishnets as fishnets
 from ili.utils import load_nde_lampe
 from ili.inference import InferenceRunner
 from ili.validation.metrics import PosteriorSamples
 import tarp
+import time
 import torch
-from my_func import *
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

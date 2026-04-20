@@ -157,7 +157,7 @@ def plot_stars_data(dfs: list, features: list[str], RANGE=None):
 features = ['E', 'L', 'FeH', 'MgFe']
 parameters = ['infall_time','log_Mprog_stellar', 'log_Mprog', 'log_Mprog2host']
 
-output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/no_obs_noise/'
+output_dir = '/mnt/aridata1/users/ariasant/MW-sbi/trials5/'
 
 print(f"output_dir: {output_dir}", flush=True)
 
@@ -399,7 +399,7 @@ else:
         if len(prog_data) < 100:
             continue
         # Sample the data n times (maximum 20 and minimum 10 times)
-        n = max(min(20, math.ceil(len(prog_data)//100)),10)
+        n = max(min(100, math.ceil(len(prog_data)//100)),10)
         for i in range(n):
             idx_sample = rng.choice(np.arange(len(prog_data)), size=100, replace=False)
             u = rng.uniform()
@@ -488,7 +488,7 @@ fig.savefig(f"{output_dir}oversampled_merger_parameters_{filename}.pdf", dpi=300
 if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
     
     # Run hyperparameter search
-    print("Starting hyperparameter search for the fishnets model", flush=True)
+    """print("Starting hyperparameter search for the fishnets model", flush=True)
     fishnet_params = optuna_opt.hyperparameter_search_fishnets(X_train=X_train,
                                                                Y_train=Y_train,
                                                                X_test=X_test,
@@ -496,7 +496,12 @@ if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
                                                                data_scaler=data_scaler,
                                                                noise_list=noise_list,
                                                                study_dir=f"{output_dir}optuna/",
-                                                               n_trials=100)                       
+                                                               n_trials=100)  """   
+    fishnet_params = {'n_hidden_layers': 15,
+                      'n_nodes_per_layer': 128,
+                      'batch_size': 8,
+                      'lr': 0.0001}
+
     compression_model = fishnets.FISHNET(n_params=4,
                                          n_d=100,
                                          n_features=len(features),
@@ -504,7 +509,7 @@ if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
                                          n_nodes_per_layer=fishnet_params["n_nodes_per_layer"])                 
 
     # Train the compression model
-    n_epochs = 2000
+    n_epochs = 5000
     print("Training compression model...", flush=True)
     start = time.time()
     training_results = compression_model.train(data_=X_train,
@@ -514,7 +519,7 @@ if not os.path.exists(f"{output_dir}/optuna/fishnets_study.db"):
                                                 noise_list=noise_list,
                                                 data_scaler=data_scaler,
                                                 batch_size=pow(2,fishnet_params["batch_size"]),
-                                                burn_in=50,
+                                                burn_in=0,
                                                 lr=fishnet_params["lr"],
                                                 epochs=n_epochs,
                                                 weights_dir=f"{output_dir}/weights/")
@@ -587,7 +592,7 @@ else:
                                                 noise_list=noise_list,
                                                 data_scaler=data_scaler,
                                                 batch_size=batch_size,
-                                                burn_in=5,
+                                                burn_in=1,
                                                 lr=lr,
                                                 epochs=n_epochs,
                                                 weights_dir=f"{output_dir}/weights/")
@@ -700,12 +705,17 @@ prior = Uniform(low=[0,6,8,-3],
 
 if not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db"):
 
-    npe_params = hyperparameter_search(loader=loader,
+    """npe_params = hyperparameter_search(loader=loader,
                                        prior=prior,
                                        study_dir=f"{output_dir}optuna/",
                                        X_test=val_data.cpu().numpy(),
                                        Y_test=val_labels.cpu().numpy(), 
-                                       n_trials=100)
+                                       n_trials=100)"""
+    
+    npe_params = {'hidden_features': 64,
+                      'num_transforms': 5,
+                      'batch_size': 8,
+                      'lr': 0.0001}
 
     # Train NPE
     train_args = dict(
@@ -713,7 +723,7 @@ if not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db"):
         learning_rate=npe_params["lr"],
         stop_after_epochs=100,
         max_epochs=2000,
-        clip_max_norm=1
+        clip_max_norm=5.
     )
 
     # Update NPE model with results of optimisation
@@ -722,7 +732,7 @@ if not os.path.exists(f"{output_dir}optuna/ltu_ili_npe_tarp_study.db"):
                            model="nsf",
                            x_normalize=True,
                            theta_normalize=True,
-                           device=device) for i in range(3)]
+                           device=device) for i in range(1)]
 
     # Re-define runner with optimised flows
     runner = InferenceRunner.load(
@@ -800,8 +810,8 @@ pickle.dump(samples,
 filename = "Suite_"+"".join(features)+"".join(parameters)
 # Make plot of cross-validated parameters inference
 plot_labels=['$\\tau \, [\mathrm{Gyr}]$',
-             'log($M_{*}/M_{\odot}$)',
-             'log($M/M_{\odot}$)', 
+             'log($M_{*}/\\rm{M}_{\odot}$)',
+             'log($M/\\rm{M}_{\odot}$)', 
              'MMR (log)']
 plot_ranges=[[0.1,13.9],[5.9,10.9],[8.5,11.9],[-3.2,-0.1]]
 

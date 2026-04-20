@@ -4,8 +4,6 @@ import pickle
 import astropy.units as u
 from astropy.cosmology import Planck15, z_at_value
 
-#f_list = glob.glob("/mnt/aridata1/users/ariasant/auriga-sbi/data/dataframes/*_snap127.pkl")
-
 f_list = glob.glob("/mnt/aridata1/users/ariasant/auriga-sbi/data/with_satellites/*")
 
 output_dict = {}
